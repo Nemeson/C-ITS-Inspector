@@ -8,6 +8,7 @@ optional LineString trajectories.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -42,10 +43,43 @@ STATION_COLORS = [
     simplekml.Color.darkblue,
 ]
 
+_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\s]+')
+
 
 def _get_station_color(index: int) -> str:
     """Get a color for a station based on its index."""
     return STATION_COLORS[index % len(STATION_COLORS)]
+
+
+def _sanitize_station_id(station_id: str) -> str:
+    """Convert a station id into a Windows-safe filename fragment."""
+    sanitized = _INVALID_FILENAME_CHARS.sub("_", station_id).strip("._")
+    return sanitized or "unknown_station"
+
+
+def _make_output_path(output_dir: Path, station_id: str, used_names: set[str]) -> Path:
+    """Create a unique output path even when sanitized station ids collide."""
+    safe_id = _sanitize_station_id(station_id)
+    candidate = f"station_{safe_id}.kml"
+    suffix = 2
+    while candidate.lower() in used_names:
+        candidate = f"station_{safe_id}_{suffix}.kml"
+        suffix += 1
+    used_names.add(candidate.lower())
+    return output_dir / candidate
+
+
+def _format_schema_provenance() -> str:
+    """Build a short human-readable string of ASN.1 schema versions in use."""
+    try:
+        from .asn1_schemas import get_schema_versions
+    except ImportError:
+        return ""
+    versions = get_schema_versions()
+    if not versions:
+        return ""
+    parts = [f"{name}: {ver}" for name, ver in sorted(versions.items())]
+    return "ASN.1 Schema-Versionen: " + "; ".join(parts)
 
 
 def export_kml(
@@ -69,6 +103,7 @@ def export_kml(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     created_files: list[Path] = []
+    used_names: set[str] = set()
 
     # Apply filters
     types_filter = active_types or set(MsgType for MsgType in MessageType)
@@ -83,9 +118,15 @@ def export_kml(
             continue
         stations.setdefault(msg.station_id, []).append(msg)
 
+    # Phase 2.2: record the ASN.1 schema versions used for this export so
+    # downstream viewers can trace the decoding lineage.
+    schema_provenance = _format_schema_provenance()
+
     for station_idx, (station_id, messages) in enumerate(stations.items()):
         kml = simplekml.Kml()
         kml.document.name = f"PCAP2KML - Station {station_id}"
+        if schema_provenance:
+            kml.document.description = schema_provenance
 
         # Add placemarks for each message
         for msg in messages:
@@ -114,8 +155,7 @@ def export_kml(
             line.altitudemode = simplekml.AltitudeMode.clamptoground
 
         # Write KML file
-        safe_id = station_id.replace("/", "_").replace("\\", "_").replace(" ", "_")
-        out_path = output_dir / f"station_{safe_id}.kml"
+        out_path = _make_output_path(output_dir, station_id, used_names)
         kml.save(str(out_path))
         created_files.append(out_path)
         logger.info("Exported %d points for station %s -> %s", len(messages), station_id, out_path)

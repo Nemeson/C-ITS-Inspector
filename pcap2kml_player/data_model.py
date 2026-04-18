@@ -35,7 +35,20 @@ class V2xMessage:
     speed: Optional[float] = None
     heading: Optional[float] = None
     raw_payload: Optional[bytes] = None
+    details: dict[str, str] = field(default_factory=dict)
     security_info: Optional[SecurityInfo] = None
+    decoded_data: dict = field(default_factory=dict)
+    """Structured fields extracted from the ASN.1-decoded ITS PDU.
+
+    Message-type-specific keys (Phase 2.1 — ETSI TS 103 301 / EN 302 637):
+      CAM:    vehicleWidth, vehicleLength, driveDirection, lightBarStatus, ...
+      DENM:   causeCode, subCauseCode, severity, validityDuration, ...
+      MAPEM:  intersectionId, revision, lanes[...], speedLimits, ...
+      SPATEM: intersectionId, signalGroups[...], moy, timeStamp, ...
+      SREM:   requestId, sequenceNumber, importanceLevel, requestorRole,
+              inLane, outLane, eta, ...
+      SSEM:   requestId, sequenceNumber, status, ...
+    """
 
     def to_kml_description(self) -> str:
         """Generate an HTML description string for KML Placemark."""
@@ -52,6 +65,24 @@ class V2xMessage:
         if self.heading is not None:
             parts.append(f"<b>Heading:</b> {self.heading:.1f}°")
         return "<br>".join(parts)
+
+    def to_detail_rows(self) -> list[tuple[str, str]]:
+        """Convert the message into human-readable detail rows."""
+        rows = [
+            ("Nachrichtentyp", self.msg_type.value),
+            ("Station", self.station_id),
+            ("Zeit", self.timestamp.isoformat()),
+            ("Position", f"{self.latitude:.6f}, {self.longitude:.6f}"),
+        ]
+        if self.altitude is not None:
+            rows.append(("Hoehe", f"{self.altitude:.1f} m"))
+        if self.speed is not None:
+            rows.append(("Geschwindigkeit", f"{self.speed:.1f} m/s"))
+        if self.heading is not None:
+            rows.append(("Heading", f"{self.heading:.1f} deg"))
+        for key, value in self.details.items():
+            rows.append((key, value))
+        return rows
 
 
 @dataclass

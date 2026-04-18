@@ -1,14 +1,8 @@
-"""Playback controller for synchronized message replay.
-
-Uses QTimer to simulate PCAP time with adjustable speed. Emits tick
-signals that the map widget and message list use to highlight the
-current message.
-"""
+"""Playback controller for synchronized message replay."""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
@@ -17,38 +11,31 @@ from .data_model import SessionData, V2xMessage
 
 logger = logging.getLogger(__name__)
 
-# Timer interval in milliseconds
 TICK_INTERVAL_MS = 50
-
-# Available playback speeds
 SPEED_OPTIONS = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
 
 
 class PlayerController(QObject):
-    """Controls playback of V2X messages with time simulation."""
+    """Controls playback of V2X messages with accumulated time simulation."""
 
-    # Signals
-    tick = pyqtSignal(object)          # Emits current V2xMessage or None
-    time_updated = pyqtSignal(float)   # Current playback time (epoch seconds)
-    duration_changed = pyqtSignal(float)  # Total duration in seconds
-    state_changed = pyqtSignal(str)   # "playing", "paused", "stopped"
-    position_changed = pyqtSignal(int)  # Current message index
+    tick = pyqtSignal(object)
+    time_updated = pyqtSignal(float)
+    duration_changed = pyqtSignal(float)
+    state_changed = pyqtSignal(str)
+    position_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._session: Optional[SessionData] = None
         self._messages: list[V2xMessage] = []
-        self._current_index: int = 0
-        self._speed: float = 1.0
-        self._state: str = "stopped"
+        self._current_index = 0
+        self._speed = 1.0
+        self._state = "stopped"
+        self._playback_time_seconds = 0.0
 
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_INTERVAL_MS)
         self._timer.timeout.connect(self._on_tick)
-
-        # Real-time tracking
-        self._last_real_time: float = 0.0
-        self._playback_start_time: datetime = datetime.min.replace(tzinfo=timezone.utc)
 
     @property
     def state(self) -> str:
@@ -70,25 +57,24 @@ class PlayerController(QObject):
         """Set the session data for playback."""
         self.stop()
         self._session = session
-        self._messages = list(session.messages)  # Work with a snapshot
+        self._messages = list(session.messages)
         self._current_index = 0
-
+        self._playback_time_seconds = 0.0
         if self._messages:
             self.duration_changed.emit(session.duration_seconds)
 
     def set_filtered_messages(self, messages: list[V2xMessage]) -> None:
-        """Update the message list when filters change (without restarting)."""
+        """Update the message list when filters change."""
         was_playing = self._state == "playing"
         self.stop()
         self._messages = messages
         self._current_index = 0
-
+        self._playback_time_seconds = 0.0
         if self._messages:
             duration = (
                 self._messages[-1].timestamp - self._messages[0].timestamp
             ).total_seconds()
             self.duration_changed.emit(duration)
-
         if was_playing and self._messages:
             self.play()
 
@@ -98,11 +84,10 @@ class PlayerController(QObject):
             return
         if self._current_index >= len(self._messages):
             self._current_index = 0
-
+            self._playback_time_seconds = 0.0
         self._state = "playing"
-        self._playback_start_time = self._messages[self._current_index].timestamp
-        self._last_real_time = 0.0
         self._timer.start()
+        self.tick.emit(self._messages[self._current_index])
         self.state_changed.emit("playing")
 
     def pause(self) -> None:
@@ -115,6 +100,7 @@ class PlayerController(QObject):
         """Stop playback and reset to beginning."""
         self._timer.stop()
         self._current_index = 0
+        self._playback_time_seconds = 0.0
         self._state = "stopped"
         self.state_changed.emit("stopped")
         if self._messages:
@@ -131,11 +117,12 @@ class PlayerController(QObject):
         if 0 <= index < len(self._messages):
             self._current_index = index
             msg = self._messages[index]
+            self._playback_time_seconds = (
+                msg.timestamp - self._messages[0].timestamp
+            ).total_seconds()
             self.tick.emit(msg)
             self.position_changed.emit(index)
-            if self._state == "playing":
-                self._playback_start_time = msg.timestamp
-                self._last_real_time = 0.0
+            self.time_updated.emit(self._playback_time_seconds)
 
     def seek_to_position(self, percent: float) -> None:
         """Jump to a position as percentage (0.0 - 1.0)."""
@@ -145,35 +132,28 @@ class PlayerController(QObject):
         self.seek_to_index(max(0, min(index, len(self._messages) - 1)))
 
     def _on_tick(self) -> None:
-        """Timer tick handler — advance playback position."""
-        if self._current_index >= len(self._messages):
+        """Advance playback according to accumulated simulated time."""
+        if not self._messages:
             self.pause()
             return
 
+        self._playback_time_seconds += (TICK_INTERVAL_MS / 1000.0) * self._speed
+
+        while self._current_index + 1 < len(self._messages):
+            next_msg = self._messages[self._current_index + 1]
+            next_offset = (
+                next_msg.timestamp - self._messages[0].timestamp
+            ).total_seconds()
+            if next_offset > self._playback_time_seconds:
+                break
+            self._current_index += 1
+
         current_msg = self._messages[self._current_index]
+        self.tick.emit(current_msg)
+        self.position_changed.emit(self._current_index)
+        self.time_updated.emit(self._playback_time_seconds)
 
-        # Find next message whose timestamp is ahead of the simulated time
-        # Use elapsed real time * speed factor to simulate PCAP time
-        elapsed_real = TICK_INTERVAL_MS / 1000.0
-        elapsed_pcap = elapsed_real * self._speed
-
-        # Advance to the next message if enough simulated time has passed
-        next_index = self._current_index + 1
-        if next_index < len(self._messages):
-            next_msg = self._messages[next_index]
-            gap = (next_msg.timestamp - current_msg.timestamp).total_seconds()
-
-            if elapsed_pcap >= gap:
-                self._current_index = next_index
-                self.tick.emit(next_msg)
-                self.position_changed.emit(next_index)
-            else:
-                # Still within the current time gap — emit current message
-                self.tick.emit(current_msg)
-        else:
-            # Last message reached
-            self._current_index = next_index
-            self.tick.emit(current_msg)
+        if self._current_index >= len(self._messages) - 1:
             self.pause()
 
     def format_time(self, seconds: float) -> str:
@@ -183,9 +163,5 @@ class PlayerController(QObject):
         return f"{minutes:02d}:{secs:04.1f}"
 
     def get_current_playback_time(self) -> float:
-        """Get the current playback time as seconds from start."""
-        if not self._messages or self._current_index >= len(self._messages):
-            return 0.0
-        current_msg = self._messages[self._current_index]
-        start_time = self._messages[0].timestamp
-        return (current_msg.timestamp - start_time).total_seconds()
+        """Get the current playback time in seconds from the start."""
+        return self._playback_time_seconds

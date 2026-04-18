@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(rtk pip:*)",
+      "Bash(pip show:*)",
+      "Bash(tasklist)",
+      "Bash(ls:*)",
+      "Bash(rtk git:*)"
+    ]
+  }
+}

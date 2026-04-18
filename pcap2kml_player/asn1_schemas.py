@@ -15,8 +15,11 @@ ETSI Standards Referenced:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import pickle
 import subprocess
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +31,11 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 SCHEMAS_DIR = Path(__file__).parent / "assets" / "asn1"
+SCHEMA_CACHE_DIR = Path(__file__).parent / "assets" / "cache"
+
+# Structured decoding error statistics (Phase 1.2).
+# Counter is reset per process; surface via `get_decoding_error_stats()`.
+_decoding_errors: Counter[str] = Counter()
 
 # Official ETSI Forge GitLab repositories (BSD 3-Clause license)
 ETSI_FORGE_BASE = "https://forge.etsi.org/rep/ITS/asn1"
@@ -80,6 +88,99 @@ _compiled_schemas: dict[str, object] = {}
 def _ensure_schema_dir() -> None:
     """Create the ASN.1 schema directory if it doesn't exist."""
     SCHEMAS_DIR.mkdir(parents=True, exist_ok=True)
+    SCHEMA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _file_sha256(path: Path) -> str:
+    """Compute SHA-256 of a file, streamed."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_schema_integrity() -> dict[str, str]:
+    """Return a SHA-256 digest for every .asn file in the schema directory.
+
+    Used as an integrity fingerprint: if the dict is stable across runs,
+    schemas have not been tampered with.
+    """
+    if not SCHEMAS_DIR.exists():
+        return {}
+    return {p.name: _file_sha256(p) for p in sorted(SCHEMAS_DIR.glob("*.asn"))}
+
+
+def get_schema_versions() -> dict[str, str]:
+    """Extract schema version strings from .asn file headers.
+
+    Scans up to the first 40 lines of each file for ETSI-style version
+    markers ("V1.4.1", "V2.2.1" ...). Used for KML provenance (Phase 2.2).
+    """
+    import re
+    version_re = re.compile(r"V\d+\.\d+\.\d+")
+    versions: dict[str, str] = {}
+    if not SCHEMAS_DIR.exists():
+        return versions
+    for path in sorted(SCHEMAS_DIR.glob("*.asn")):
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as fh:
+                for _ in range(40):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    match = version_re.search(line)
+                    if match:
+                        versions[path.stem] = match.group(0)
+                        break
+        except OSError as exc:
+            logger.debug("Could not read %s for version: %s", path, exc)
+    return versions
+
+
+def get_decoding_error_stats() -> dict[str, int]:
+    """Return counts of ASN.1 decoding errors grouped by (msg_type, reason).
+
+    Phase 1.2: structured visibility over decoding failures instead of
+    only a stream of debug logs.
+    """
+    return dict(_decoding_errors)
+
+
+def reset_decoding_error_stats() -> None:
+    """Clear the decoding-error counter (e.g. between sessions)."""
+    _decoding_errors.clear()
+
+
+def _cache_key(msg_type: str, schema_files: list[Path]) -> str:
+    """Build a cache key that changes when any input schema file changes."""
+    hasher = hashlib.sha256()
+    hasher.update(msg_type.encode("utf-8"))
+    for path in schema_files:
+        hasher.update(path.name.encode("utf-8"))
+        hasher.update(_file_sha256(path).encode("ascii"))
+    return hasher.hexdigest()[:16]
+
+
+def _load_compiled_from_disk(cache_path: Path):
+    """Load a pickled compiled schema, or return None on any failure."""
+    try:
+        with cache_path.open("rb") as fh:
+            return pickle.load(fh)
+    except (OSError, pickle.UnpicklingError, EOFError, AttributeError) as exc:
+        logger.debug("Compiled-schema cache miss (%s): %s", cache_path.name, exc)
+        return None
+
+
+def _save_compiled_to_disk(cache_path: Path, compiled) -> None:
+    """Best-effort persist of a compiled schema to disk."""
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with cache_path.open("wb") as fh:
+            pickle.dump(compiled, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    except (OSError, pickle.PicklingError, TypeError) as exc:
+        # Not all asn1tools versions pickle cleanly; treat as non-fatal.
+        logger.debug("Could not persist compiled schema %s: %s", cache_path.name, exc)
 
 
 def _schema_files_available() -> bool:
@@ -195,14 +296,25 @@ def get_compiled_schema(msg_type: str) -> Optional[object]:
         )
         return None
 
+    cache_key = _cache_key(msg_type, schema_files)
+    cache_path = SCHEMA_CACHE_DIR / f"{msg_type}_{cache_key}.pkl"
+    if cache_path.exists():
+        cached = _load_compiled_from_disk(cache_path)
+        if cached is not None:
+            _compiled_schemas[msg_type] = cached
+            logger.debug("Loaded cached ASN.1 schema for %s from %s", msg_type, cache_path.name)
+            return cached
+
     try:
         file_paths = [str(f) for f in schema_files]
         compiled = asn1tools.compile_files(file_paths, "uper")
         _compiled_schemas[msg_type] = compiled
+        _save_compiled_to_disk(cache_path, compiled)
         logger.info("Compiled ASN.1 schema for %s from %d files",
                      msg_type, len(file_paths))
         return compiled
     except Exception as e:
+        _decoding_errors[f"compile:{msg_type}:{type(e).__name__}"] += 1
         logger.error("Failed to compile ASN.1 schema for %s: %s",
                       msg_type, e)
         return None
@@ -231,6 +343,7 @@ def decode_its_message(msg_type: str, payload: bytes) -> Optional[dict]:
         decoded = schema.decode(asn1_type_name, payload)
         return decoded
     except Exception as e:
+        _decoding_errors[f"decode:{msg_type}:{type(e).__name__}"] += 1
         logger.debug("ASN.1 decode failed for %s (%s): %s",
                       msg_type, asn1_type_name, e)
         return None
