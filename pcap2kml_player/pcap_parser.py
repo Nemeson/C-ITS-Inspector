@@ -135,6 +135,21 @@ def _decode_its_message(msg_type: MessageType, payload: bytes) -> Optional[V2xMe
         return None
 
     lat, lon, alt, speed, heading, station_id = result
+
+    # ─── Extract security header info from raw payload ────
+    from .security_parser import parse_security_header, extract_security_from_decoded
+    security_info = parse_security_header(payload)
+    # Also try to extract from the decoded message fields
+    decoded_security = extract_security_from_decoded(decoded, msg_type.value)
+    if security_info is None:
+        security_info = decoded_security
+    elif decoded_security is not None:
+        # Merge: decoded fields fill in gaps left by raw parsing
+        if security_info.station_type is None and decoded_security.station_type:
+            security_info.station_type = decoded_security.station_type
+        if security_info.its_aid_list is None and decoded_security.its_aid_list:
+            security_info.its_aid_list = decoded_security.its_aid_list
+
     return V2xMessage(
         timestamp=datetime.now(tz=timezone.utc),
         station_id=station_id,
@@ -145,6 +160,7 @@ def _decode_its_message(msg_type: MessageType, payload: bytes) -> Optional[V2xMe
         speed=speed,
         heading=heading,
         raw_payload=payload,
+        security_info=security_info,
     )
 
 

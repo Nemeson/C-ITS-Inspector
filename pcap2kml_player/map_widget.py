@@ -12,6 +12,7 @@ from typing import Optional
 
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtWebChannel import QWebChannel
+from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from .data_model import MessageType, V2xMessage
@@ -39,10 +40,31 @@ LEAFLET_HTML = """<!DOCTYPE html>
     <div id="map"></div>
     <script>
         var map = L.map('map').setView([48.0, 11.0], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
+
+        // Primary tile layer (OpenStreetMap with proper attribution)
+        var osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             maxZoom: 19
-        }).addTo(map);
+        });
+
+        // Fallback tile layer (CartoDB — works reliably from embedded browsers)
+        var cartoLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+            maxZoom: 20
+        });
+
+        // Try OSM first; if tiles fail to load, switch to CartoDB
+        var activeLayer = osmLayer.addTo(map);
+        var tileErrorCount = 0;
+
+        osmLayer.on('tileerror', function() {
+            tileErrorCount++;
+            if (tileErrorCount >= 3 && activeLayer === osmLayer) {
+                map.removeLayer(osmLayer);
+                cartoLayer.addTo(map);
+                activeLayer = cartoLayer;
+            }
+        });
 
         var markers = {};
         var trajectories = {};
@@ -139,6 +161,13 @@ class MapWidget(QWebEngineView):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Set a proper User-Agent so OSM tile servers don't reject requests with 403
+        profile = QWebEngineProfile.defaultProfile()
+        profile.setHttpUserAgent(
+            "PCAP2KML-Player/1.0 (Windows; V2X-Viewer) OSM-Tiles/1.0"
+        )
+
         self._bridge = MapBridge()
         self._channel = QWebChannel()
         self._channel.registerObject("bridge", self._bridge)

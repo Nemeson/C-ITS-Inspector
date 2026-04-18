@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..data_model import MessageType, SessionData, V2xMessage
+from ..data_model import MessageType, SecurityInfo, SessionData, V2xMessage
 from ..kml_exporter import export_kml
 from ..map_widget import MapWidget
 from ..pcap_parser import parse_pcap
@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
         parent_layout.addWidget(filter_widget)
 
     def _setup_message_list(self) -> QWidget:
-        """Create the message table widget."""
+        """Create the message table widget with a collapsible security detail panel."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -178,7 +178,30 @@ class MainWindow(QMainWindow):
 
         self._msg_table.cellClicked.connect(self._on_table_row_clicked)
 
-        layout.addWidget(self._msg_table)
+        layout.addWidget(self._msg_table, stretch=3)
+
+        # ─── Security detail panel ────────────────────────────────
+        detail_label = QLabel("Sicherheitsheader / PKI-Details")
+        detail_label.setStyleSheet("font-weight: bold; padding: 4px 0 2px 0;")
+
+        self._detail_table = QTableWidget(0, 2)
+        self._detail_table.setHorizontalHeaderLabels(["Feld", "Wert"])
+        self._detail_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._detail_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )
+        self._detail_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._detail_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._detail_table.verticalHeader().setVisible(False)
+        self._detail_table.setAlternatingRowColors(True)
+        self._detail_table.setMaximumHeight(250)
+        self._detail_table.hide()  # Initially hidden
+
+        layout.addWidget(detail_label)
+        layout.addWidget(self._detail_table, stretch=2)
+
         return panel
 
     def _setup_playback_controls(self, parent_layout: QVBoxLayout) -> None:
@@ -428,6 +451,9 @@ class MainWindow(QMainWindow):
         # Highlight the current row in the table
         self._highlight_table_row(msg)
 
+        # Show security details for the current message
+        self._show_security_detail(msg)
+
         # Update time display
         current_time = self._player.get_current_playback_time()
         total_time = self._session.duration_seconds if self._session else 0.0
@@ -481,7 +507,7 @@ class MainWindow(QMainWindow):
         self._player.seek_to_position(value / 1000.0)
 
     def _on_table_row_clicked(self, row: int, col: int) -> None:
-        """Handle table row click — jump to that message."""
+        """Handle table row click — jump to that message and show security details."""
         # Find the message index in the player's message list
         ts_item = self._msg_table.item(row, COL_TIMESTAMP)
         st_item = self._msg_table.item(row, COL_STATION)
@@ -493,9 +519,32 @@ class MainWindow(QMainWindow):
                 if (msg.timestamp.strftime("%H:%M:%S.%f")[:-3] == target_ts
                         and msg.station_id == target_station):
                     self._player.seek_to_index(i)
+                    # Show security details for this message
+                    self._show_security_detail(msg)
                     break
 
     # ─── Utility ──────────────────────────────────────────────────
+
+    def _show_security_detail(self, msg: V2xMessage) -> None:
+        """Show security/PKI details for the selected message in the detail table."""
+        security = msg.security_info
+
+        if security is None:
+            self._detail_table.setRowCount(1)
+            self._detail_table.setItem(0, 0, QTableWidgetItem("Sicherheitsheader"))
+            self._detail_table.setItem(0, 1, QTableWidgetItem(
+                "Kein Sicherheitsheader vorhanden (unkodiert oder nicht extrahierbar)"
+            ))
+            self._detail_table.show()
+            return
+
+        rows = security.to_table_rows()
+        self._detail_table.setRowCount(len(rows))
+        for i, (field, value) in enumerate(rows):
+            self._detail_table.setItem(i, 0, QTableWidgetItem(field))
+            self._detail_table.setItem(i, 1, QTableWidgetItem(value))
+
+        self._detail_table.show()
 
     def _update_controls_enabled(self, enabled: bool) -> None:
         """Enable or disable playback and export controls."""

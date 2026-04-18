@@ -35,6 +35,7 @@ class V2xMessage:
     speed: Optional[float] = None
     heading: Optional[float] = None
     raw_payload: Optional[bytes] = None
+    security_info: Optional[SecurityInfo] = None
 
     def to_kml_description(self) -> str:
         """Generate an HTML description string for KML Placemark."""
@@ -51,6 +52,85 @@ class V2xMessage:
         if self.heading is not None:
             parts.append(f"<b>Heading:</b> {self.heading:.1f}°")
         return "<br>".join(parts)
+
+
+@dataclass
+class SecurityInfo:
+    """Security header data extracted from ETSI TS 103 097 signed messages.
+
+    ETSI ITS G5 messages carry a security envelope (IEEE 1609.2 / ETSI TS 103 097)
+    that wraps the actual ITS PDU. This dataclass holds the extracted fields.
+
+    Reference: ETSI TS 103 097 V2.2.1 (Security header and certificate formats)
+    """
+    # Security envelope
+    protocol_version: Optional[int] = None
+    """ITS Security protocol version (2 = current)."""
+    security_profile: Optional[str] = None
+    """Security profile: 'unsecured', 'signed', 'signed_encrypted', 'signed_encrypted_auth'."""
+
+    # Signer information
+    signer_type: Optional[str] = None
+    """How the signer is identified: 'self', 'digest', 'certificate_chain'."""
+    signer_digest: Optional[str] = None
+    """SHA-256 digest of the signing certificate (hex string)."""
+    certificate_issuer: Optional[str] = None
+    """Issuer of the signing certificate."""
+    certificate_subject_type: Optional[str] = None
+    """Subject type: 'CA', 'subscriber', 'enrollment_CA'."""
+
+    # Certificate validity
+    validity_start: Optional[str] = None
+    """Certificate validity start (ISO 8601 or 'Not available')."""
+    validity_end: Optional[str] = None
+    """Certificate validity end (ISO 8601 or 'Not available')."""
+
+    # Signature
+    signature_algorithm: Optional[str] = None
+    """ECDSA curve: 'NIST P-256' or 'BrainpoolP256r1'."""
+    signature_r: Optional[str] = None
+    """Signature R value (hex, first 16 bytes)."""
+    signature_s: Optional[str] = None
+    """Signature S value (hex, first 16 bytes)."""
+
+    # Subject attributes
+    assurance_level: Optional[int] = None
+    """Assurance level (0-7) per ETSI TS 102 941."""
+    station_type: Optional[str] = None
+    """Station type from certificate (e.g. 'passengerCar', 'roadSideUnit')."""
+    its_aid_list: Optional[list[int]] = None
+    """ITS Application Identifiers the certificate is authorized for."""
+    ssp_permissions: Optional[str] = None
+    """Service Specific Permissions (hex or human-readable)."""
+
+    # Geographic scope
+    region_type: Optional[str] = None
+    """Geographic validity: 'none', 'circular', 'rectangular', 'polygonal', 'country'."""
+    region_detail: Optional[str] = None
+    """Region description (e.g. 'Germany (DE)' or lat/lon coordinates)."""
+
+    def to_table_rows(self) -> list[tuple[str, str]]:
+        """Convert to list of (field, value) pairs for table display."""
+        rows = [
+            ("Protokollversion", str(self.protocol_version) if self.protocol_version is not None else "—"),
+            ("Sicherheitsprofil", self.security_profile or "—"),
+            ("Signer-Typ", self.signer_type or "—"),
+            ("Signer-Digest", self.signer_digest or "—"),
+            ("Zertifikat-Aussteller", self.certificate_issuer or "—"),
+            ("Subjekt-Typ", self.certificate_subject_type or "—"),
+            ("Gültig von", self.validity_start or "—"),
+            ("Gültig bis", self.validity_end or "—"),
+            ("Signaturalgorithmus", self.signature_algorithm or "—"),
+            ("Signatur R (gekürzt)", self.signature_r or "—"),
+            ("Signatur S (gekürzt)", self.signature_s or "—"),
+            ("Assurance-Level", str(self.assurance_level) if self.assurance_level is not None else "—"),
+            ("Stations-Typ", self.station_type or "—"),
+            ("ITS-AIDs", ", ".join(str(a) for a in self.its_aid_list) if self.its_aid_list else "—"),
+            ("SSP-Berechtigungen", self.ssp_permissions or "—"),
+            ("Regionstyp", self.region_type or "—"),
+            ("Region", self.region_detail or "—"),
+        ]
+        return rows
 
 
 @dataclass
