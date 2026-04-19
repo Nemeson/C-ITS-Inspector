@@ -715,6 +715,7 @@ class MainWindow(QMainWindow):
         if msg is None:
             return
 
+        self._map_widget.render_playback_slice(self._player._messages, self._player.current_index)
         self._map_widget.update_playback_position(msg)
         self._highlight_table_row(msg)
         self._show_security_detail(msg)

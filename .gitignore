@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 *.egg-info/
 dist/
 build/
@@ -14,3 +19,4 @@ venv/
 *.heapsnapshot
 .omc/
 .claude/
+pcap2kml_player/assets/cache/*.pkl

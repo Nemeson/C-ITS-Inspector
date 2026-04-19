@@ -20,6 +20,7 @@ from .data_model import MessageType, V2xMessage
 from .scene_model import build_scene_snapshot
 
 logger = logging.getLogger(__name__)
+PLAYBACK_TRAIL_POINTS = 8
 
 # Color palette for station markers (hex strings for Leaflet)
 STATION_PALETTE = [
@@ -935,7 +936,7 @@ LEAFLET_HTML = """<!DOCTYPE html>
         }
 
         // Called from Python to add a marker
-        function addMarker(id, lat, lon, popup, color, layerName) {
+        function addMarker(id, stationId, lat, lon, popup, color, layerName) {
             var group = overlayGroups[layerName] || overlayGroups.markers;
             if (markers[id]) {
                 markers[id].setLatLng([lat, lon]);
@@ -949,6 +950,11 @@ LEAFLET_HTML = """<!DOCTYPE html>
                         iconAnchor: [6, 6]
                     })
                 }).addTo(group).bindPopup(popup);
+                markers[id].on('click', function() {
+                    if (window.bridge && layerName === 'markers') {
+                        window.bridge.onMarkerClicked(stationId);
+                    }
+                });
             }
         }
 
@@ -1029,6 +1035,14 @@ LEAFLET_HTML = """<!DOCTYPE html>
                     if (dot) dot.style.transform = (key === id) ? 'scale(1.8)' : 'scale(1)';
                 }
             }
+        }
+
+        function followMarker(id) {
+            if (!markers[id]) {
+                return;
+            }
+            var latLng = markers[id].getLatLng();
+            map.panTo(latLng, {animate: false});
         }
 
         // Called from Python to fit the map view to all markers
@@ -1115,6 +1129,9 @@ class MapWidget(QWebEngineView):
 
         self._station_color_map: dict[str, str] = {}
         self._station_index = 0
+        self._follow_station_id: Optional[str] = None
+
+        self._bridge.message_clicked.connect(self._on_marker_clicked)
 
         self.setHtml(LEAFLET_HTML, QUrl("about:blank"))
 
@@ -1132,7 +1149,20 @@ class MapWidget(QWebEngineView):
         return INFRASTRUCTURE_MESSAGE_COLORS.get(msg.msg_type, self._get_station_color(msg.station_id))
 
     def load_messages(self, messages: list[V2xMessage]) -> None:
-        """Load all messages onto the map: markers and trajectories."""
+        """Load all messages onto the map: markers, trajectories, and overlays."""
+        self._follow_station_id = None
+        self._render_messages(messages, fit_view=True, short_trails=False)
+
+    def render_playback_slice(self, messages: list[V2xMessage], current_index: int) -> None:
+        """Render only the state visible up to the current playback index."""
+        if not messages:
+            self.clear()
+            return
+        safe_index = max(0, min(current_index, len(messages) - 1))
+        self._render_messages(messages[: safe_index + 1], fit_view=False, short_trails=True)
+
+    def _render_messages(self, messages: list[V2xMessage], *, fit_view: bool, short_trails: bool) -> None:
+        """Internal renderer for a full load or a playback time slice."""
         self._run_js("clearAll()")
 
         # Assign colors and set them in JS
@@ -1152,21 +1182,16 @@ class MapWidget(QWebEngineView):
                 f"Pos: {msg.latitude:.6f}, {msg.longitude:.6f}"
             )
 
-            # Place marker at latest position
-            marker_id = _js_escape(_marker_id_for_message(msg))
-            popup_js = _js_escape(popup)
-            color_js = _js_escape(color)
-            marker_layer = (
-                "map"
-                if msg.msg_type == MessageType.MAPEM
-                else "spat"
-                if msg.msg_type == MessageType.SPATEM
-                else "markers"
-            )
-            self._run_js(
-                f"addMarker('{marker_id}', {marker_lat}, {marker_lon}, "
-                f"'{popup_js}', '{color_js}', '{marker_layer}')"
-            )
+            if msg.msg_type not in INFRASTRUCTURE_MESSAGE_COLORS:
+                # Place/update the current dynamic marker at the latest visible position.
+                marker_id = _js_escape(_marker_id_for_message(msg))
+                station_id_js = _js_escape(msg.station_id)
+                popup_js = _js_escape(popup)
+                color_js = _js_escape(color)
+                self._run_js(
+                    f"addMarker('{marker_id}', '{station_id_js}', {marker_lat}, {marker_lon}, "
+                    f"'{popup_js}', '{color_js}', 'markers')"
+                )
 
             # Collect trajectory coordinates
             if msg.msg_type not in INFRASTRUCTURE_MESSAGE_COLORS:
@@ -1206,24 +1231,34 @@ class MapWidget(QWebEngineView):
 
         # Draw trajectories
         for station_id, coords in station_coords.items():
+            if short_trails:
+                coords = coords[-PLAYBACK_TRAIL_POINTS:]
             color = _js_escape(self._get_station_color(station_id))
             coords_js = json.dumps(coords)
             self._run_js(f"addTrajectory('{_js_escape(station_id)}', {coords_js}, '{color}')")
 
         # Fit map to all markers
-        self._run_js("fitToMarkers()")
+        if fit_view:
+            self._run_js("fitToMarkers()")
 
     def update_playback_position(self, msg: V2xMessage) -> None:
         """Move the marker for msg.station_id and highlight it."""
         self._color_for_message(msg)
         marker_id = _js_escape(_marker_id_for_message(msg))
         self._run_js(f"highlightMarker('{marker_id}')")
+        if self._follow_station_id and msg.station_id == self._follow_station_id:
+            self._run_js(f"followMarker('{_js_escape(marker_id)}')")
 
     def clear(self) -> None:
         """Remove all markers and trajectories from the map."""
         self._run_js("clearAll()")
         self._station_color_map.clear()
         self._station_index = 0
+        self._follow_station_id = None
+
+    def _on_marker_clicked(self, station_id: str) -> None:
+        """Remember which dynamic object should be followed during playback."""
+        self._follow_station_id = station_id
 
     def _run_js(self, script: str) -> None:
         """Execute JavaScript in the web page."""

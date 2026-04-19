@@ -1,16 +1,15 @@
 # PCAP2KML Player
 
-Desktop-Anwendung zur Analyse und Visualisierung von V2X-Nachrichten aus PCAP-Dateien.  
-Die App kombiniert PCAP-Parsing, ASN.1-Decoding, interaktive Kartenansicht, synchronisierte Wiedergabe, KML-Export und ein Szenen-Panel fuer MAP/SPAT/SREM/SSEM.
+Desktop-Anwendung zur Analyse, Wiedergabe und Kartendarstellung von V2X-Nachrichten aus PCAP-Dateien.
 
-Stand: 2026-04-18  
-Aktueller dokumentierter Funktionsstand: v1.3
+Stand: 2026-04-19  
+Aktueller dokumentierter Funktionsstand: v1.4
 
 ## Uebersicht
 
-PCAP2KML Player ist auf ITS-G5 / ETSI-V2X-Workflows ausgelegt. Die Anwendung liest `.pcap`, `.pcapng` und `.cap`, dekodiert erkannte ITS-Nachrichten sowie NMEA-Daten und stellt sie in einer operativen Desktop-Oberflaeche dar.
+PCAP2KML Player ist auf ITS-G5 / ETSI-V2X-Workflows ausgelegt. Die App liest `.pcap`, `.pcapng` und `.cap`, dekodiert erkannte ITS-Nachrichten sowie NMEA/GNSS-Daten und stellt sie in einer operativen Desktop-Oberflaeche dar.
 
-Aktuell unterstuetzt die App insbesondere:
+Unterstuetzte Nachrichtentypen:
 
 - CAM
 - DENM
@@ -22,22 +21,38 @@ Aktuell unterstuetzt die App insbesondere:
 
 ## Kernfunktionen
 
-- Multi-Datei-PCAP-Import mit Hintergrund-Parsing, Fortschrittsanzeige und Abbrechen-Funktion
+- Multi-Datei-PCAP-Import mit Hintergrund-Parsing, Fortschrittsanzeige und Abbrechen
 - Drag & Drop fuer Capture-Dateien
-- Persistente "Letzte Sitzung"-Funktion inklusive letzter Verzeichnisse und Sitzungszusammenfassung
-- Interaktive Leaflet-Karte im Desktop-Fenster mit Marker- und Trajektoriendarstellung
+- Persistente "Letzte Sitzung"-Funktion mit Dateiliste und Sitzungszusammenfassung
+- Interaktive Leaflet-Karte im Desktop-Fenster
 - Synchronisierte Wiedergabe mit `Play`, `Pause`, `Stop`, Scrubbing und Geschwindigkeiten von `0.1x` bis `10x`
 - Live-Filter nach Nachrichtentyp und Station-ID
 - Detailansicht pro Nachricht inklusive PKI-/Security-Felder
-- KML-Export pro Station, kompatibel mit Google Earth und QGIS
-- ASN.1-Schema-Update aus Git plus Schema-Provenance im Export
+- KML-Export pro Station
+- ASN.1-Schema-Update mit Cache-Invalidierung und Integritaetspruefung
 - Szenen-Aggregation fuer MAP/SPAT/SREM/SSEM
-- MAP-zu-SPAT-Join ueber `intersectionId`
-- Phasenprognose fuer die naechsten 30 Sekunden
-- Korrelation offener Anforderungen aus SREM/SSEM
-- Timeout-Erkennung fuer unbeantwortete Anforderungen
-- Clock-Skew-Erkennung zwischen DSRC-Zeit und PCAP-Zeitstempel
-- ETA-Verifikation ueber CAM-Trajektorien relativ zur MAP-Referenzposition
+- 30s-Phasenprognose und Request-Korrelation
+- Clock-Skew- und ETA-Verifikation
+
+## Karten- und Playback-Stand
+
+Die Kartenlogik ist inzwischen deutlich ueber Marker und einfache Trajektorien hinaus erweitert:
+
+- MAP und SPAT werden als Infrastruktur-Layer statt als normale RSU-Marker gerendert
+- MAP-Lanes sind nach `Inbound` und `Outbound` getrennt
+- Connections werden schematisch zwischen Lanes dargestellt
+- Stoplines werden fuer Inbound-Lanes als eigener Layer gezeichnet
+- SPAT faerbt die zugehoerigen Connections nach `MovementState`
+- SRM/SSEM werden als Priorisierungs-Overlays auf Inbound-Lane, Outbound-Lane und Connection dargestellt
+- Dominante und sekundaere Priorisierungen werden unterschiedlich stark visualisiert
+- Mehrere Requests auf derselben Connection werden seitlich entzerrt
+
+Playback-Verhalten:
+
+- Die Karte zeigt waehrend der Wiedergabe nur den Zustand bis zur aktuellen Zeitposition, nicht den Endzustand der gesamten Datei
+- Bewegte Objekte zeigen nur die aktuelle Position plus einen kurzen Trail
+- Die Karte bleibt waehrend der Wiedergabe stabil stehen
+- Wenn ein bewegtes Objekt angeklickt wird, folgt die Karte diesem Objekt im Playback
 
 ## UI im aktuellen Stand
 
@@ -45,15 +60,23 @@ Die Hauptansicht besteht aus vier Arbeitsbereichen:
 
 1. Kopfbereich mit Sitzungsstatus, Dateianzahl, Nachrichtenzahl und Stationen
 2. Filterzeile fuer Nachrichtentypen und Stationen
-3. Karten- und Tabellensicht mit Nachrichtentabelle, Detailtabelle und Szenenpanel
+3. Karten- und rechte Arbeitsleiste
 4. Playback-Leiste mit Slider, Zeitanzeige und Geschwindigkeitsumschaltung
+
+Die rechte Arbeitsleiste ist jetzt in zwei Ebenen organisiert:
+
+- oben immer sichtbar: Nachrichtentabelle
+- darunter als Tabs:
+  - `Details` fuer Nachrichten-, PKI- und Identitaetshinweise
+  - `Szene` fuer Kreuzungszustand, Phasenprognose, Requests und Warnungen
 
 Das Szenenpanel zeigt derzeit:
 
 - Kreuzungen mit MAP-/SPAT-Revisionen
 - Signalgruppen-Zusammenfassung
 - kompakte 30s-Phasen-Timelines
-- offene Anforderungen mit Prioritaet und Lane-Bezug
+- offene und kuerzlich beantwortete Priorisierungsanforderungen
+- operative Request-Zustaende: `pending`, `acknowledged`, `granted`, `rejected`, `timeout`
 - Inline-Warnungen bei fehlender MAP-Basis, Revisionsmismatch, Timeout und Clock Skew
 - Kennzahlen wie `Msgs/s` und mittlere ETA-Abweichung
 
@@ -61,32 +84,43 @@ Das Szenenpanel zeigt derzeit:
 
 ### Parser und Decoding
 
-- `pcap_parser.py` nutzt `pyshark` bevorzugt, faellt aber auf `scapy` zurueck
+- `pcap_parser.py` nutzt `pyshark` bevorzugt und faellt auf `scapy` zurueck
 - Direkte GeoNetworking-/BTP-Erkennung fuer EtherType `0x8947`
 - Fallback-Nachrichtenerkennung ueber ITS-PDU-Header `messageId`
 - NMEA-Parsing fuer GNSS-Daten
 - ASN.1-Decoding ueber `asn1tools`
+- MAP-Normalisierung fuer Lane-Rollen, Connections und Stopline-Fallback
 
 ### Playback und Visualisierung
 
 - `player_controller.py` steuert die synchronisierte Wiedergabe
 - `map_widget.py` bettet Leaflet in `QWebEngineView` ein
-- `ui/main_window.py` verbindet Playback, Filter, Export und Szenenpanel
+- `ui/main_window.py` verbindet Playback, Filter, Export, Detailbereich und Szenenpanel
 
 ### Szenenmodell
 
-`scene_model.py` aggregiert den flachen Nachrichtenstrom zu fachlichen Zustandsobjekten:
+`scene_model.py` aggregiert den flachen Nachrichtenstrom in fachliche Zustandsobjekte:
 
 - `IntersectionState`
 - `SignalGroupState`
 - `SpatForecast`
 - `ActiveRequest`
+- `RequestVisualState`
 - `SceneSnapshot`
 - `EtaVerification`
 
 ### Security / PKI
 
 `security_parser.py` extrahiert bereits Grundinformationen aus ETSI TS 103 097 Security-Containern, darunter Signer-Typ, Signaturdaten, Gueltigkeit und weitere Zertifikatsfelder. Die tiefe Signatur- und Kettenpruefung ist noch nicht vollstaendig umgesetzt.
+
+## ASN.1-Schema-Update
+
+Das Schema-Update arbeitet jetzt robust in zwei Modi:
+
+- vorhandenes Git-Checkout in `assets/asn1`: `git pull`
+- eingebetteter lokaler Schema-Ordner ohne `.git`: temporaerer Clone in ein Temp-Verzeichnis, danach Uebernahme nur der relevanten `.asn`-Dateien
+
+Nach einem erfolgreichen Update werden In-Memory- und `.pkl`-Caches invalidiert, damit neue Schemata sofort wirksam sind.
 
 ## Projektstruktur
 
@@ -110,6 +144,7 @@ PCAP2KML/
 │   ├── ui/
 │   │   └── main_window.py
 │   ├── assets/
+│   │   ├── asn1/
 │   │   └── cache/
 │   └── requirements.txt
 ├── testfiles/
@@ -156,16 +191,18 @@ py pcap2kml_player\main.py
 ### Laden
 
 - `PCAP laden` oeffnet einen Dateidialog
-- `.pcap`, `.pcapng` und `.cap` koennen auch direkt ins Fenster gezogen werden
+- `.pcap`, `.pcapng` und `.cap` koennen direkt ins Fenster gezogen werden
 - `Letzte Sitzung` laedt die zuletzt erfolgreich geoeffneten Dateien erneut
 - `Laden abbrechen` stoppt einen laufenden Parse-Vorgang
+- `ASN.1-Schemas aktualisieren` aktualisiert die lokalen ETSI-Schemata
 
 ### Filtern und Abspielen
 
 - Nachrichtentypen lassen sich per Checkbox ein- und ausblenden
 - Stationen lassen sich in der Stationsliste selektieren
 - Der Slider springt an beliebige Zeitpunkte
-- Die Marker-Hervorhebung folgt der Wiedergabe
+- Die Karte aktualisiert sich waehrend des Playbacks zeitkonsistent
+- Bewegte Objekte koennen fuer ein Follow-Verhalten angeklickt werden
 
 ### Export
 
@@ -176,44 +213,35 @@ py pcap2kml_player\main.py
 
 ## Test- und Qualitaetsstand
 
-Die aktuelle Testsuite umfasst den Kern der Parser-, Export- und Szenenlogik.
+Die aktuelle Testsuite deckt Parser, Kartenlogik, Playback, Export, Sicherheitsparser und Szenenmodell breit ab.
 
-- Aktueller Stand: `102 passed`
-- Vorhandene Testbereiche
-- Datenmodell
-- NMEA-Parser
-- PCAP-Parser
-- Parser-Zusatzfelder
-- KML-Export
-- Player-Controller
-- App-Memory
-- Security-Parser
-- Szenenmodell
+- Aktueller Stand: `142 passed`
+- Vorhandene Testbereiche:
+  - App-Memory
+  - ASN.1-Schema-Update
+  - Datenmodell
+  - NMEA-Parser
+  - PCAP-Parser
+  - Parser-Zusatzfelder
+  - KML-Export
+  - Kartenlogik / Overlay-Erzeugung
+  - Player-Controller
+  - Security-Parser
+  - Szenenmodell
 
-Noch offen sind vor allem direkte Tests fuer:
-
-- `ui/main_window.py`
-- `map_widget.py`
-- `parsing_worker.py`
-- den eigentlichen Application-Entry-Point
+Direkte GUI-Interaktionstests fuer die komplette `main_window.py` sind weiterhin vergleichsweise leichtgewichtig; der Schwerpunkt liegt dort derzeit auf Compile-/Integrationsstabilitaet und modellnahen Regressionen.
 
 ## Bekannte Grenzen
 
 - Kein vollstaendiger PKI-Chain-Validator
 - Noch kein CSV-, GeoJSON- oder GPX-Export
-- Noch keine Offline-Karten oder Layer-Umschaltung
-- Keine dedizierte dichte Timeline / keine Frame-fuer-Frame-Navigation
+- Noch keine Offline-Karten
+- Keine vollwertige Frame-fuer-Frame-Navigation
 - Keine Headless-CLI
 
 ## Roadmap
 
 Der detaillierte Umsetzungsstand liegt in [docs/ROADMAP.md](C:/PythonTools/PCAP2KML/docs/ROADMAP.md).
-
-Naechste groessere Themen:
-
-- weitere Karten- und Visualisierungsfunktionen aus Phase 3
-- Exportformate aus Phase 4
-- Architektur- und Distributionsarbeit aus Phase 5
 
 ## Changelog
 

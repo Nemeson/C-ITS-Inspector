@@ -487,5 +487,141 @@ def test_load_messages_handles_label_overlays_without_popup(monkeypatch):
     widget.load_messages([map_msg])
 
     assert any("addInfrastructureLabel(" in script for script in captured_scripts)
-    assert any("'map')" in script and "addMarker(" in script for script in captured_scripts)
+    assert not any("addMarker(" in script for script in captured_scripts)
     assert not any("addTrajectory(" in script for script in captured_scripts)
+
+
+def test_load_messages_does_not_render_markers_for_map_or_spat(monkeypatch):
+    captured_scripts = []
+
+    def fake_run_js(self, script):
+        captured_scripts.append(script)
+
+    monkeypatch.setattr(MapWidget, "_run_js", fake_run_js)
+    monkeypatch.setattr(MapWidget, "__init__", lambda self, parent=None: None)
+
+    widget = MapWidget()
+    widget._station_color_map = {}
+    widget._station_index = 0
+
+    map_msg = V2xMessage(
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        station_id="rsu-map",
+        msg_type=MessageType.MAPEM,
+        latitude=52.0,
+        longitude=13.0,
+        decoded_data={},
+    )
+    spat_msg = V2xMessage(
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        station_id="rsu-spat",
+        msg_type=MessageType.SPATEM,
+        latitude=52.0,
+        longitude=13.0,
+        decoded_data={},
+    )
+
+    widget.load_messages([map_msg, spat_msg])
+
+    assert not any("addMarker(" in script for script in captured_scripts)
+    assert any("addInfrastructureCircle(" in script for script in captured_scripts)
+
+
+def test_render_playback_slice_uses_only_messages_up_to_current_index(monkeypatch):
+    captured_scripts = []
+
+    def fake_run_js(self, script):
+        captured_scripts.append(script)
+
+    monkeypatch.setattr(MapWidget, "_run_js", fake_run_js)
+    monkeypatch.setattr(MapWidget, "__init__", lambda self, parent=None: None)
+
+    widget = MapWidget()
+    widget._station_color_map = {}
+    widget._station_index = 0
+
+    cam1 = V2xMessage(
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        station_id="car-1",
+        msg_type=MessageType.CAM,
+        latitude=52.0,
+        longitude=13.0,
+    )
+    cam2 = V2xMessage(
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        station_id="car-1",
+        msg_type=MessageType.CAM,
+        latitude=52.1,
+        longitude=13.1,
+    )
+
+    widget.render_playback_slice([cam1, cam2], 0)
+
+    marker_scripts = [script for script in captured_scripts if "addMarker(" in script]
+    trajectory_scripts = [script for script in captured_scripts if "addTrajectory(" in script]
+
+    assert marker_scripts
+    assert "52.0, 13.0" in marker_scripts[-1]
+    assert not any("52.1, 13.1" in script for script in marker_scripts)
+    assert trajectory_scripts
+    assert "52.1" not in trajectory_scripts[-1]
+
+
+def test_render_playback_slice_limits_trail_to_recent_points(monkeypatch):
+    captured_scripts = []
+
+    def fake_run_js(self, script):
+        captured_scripts.append(script)
+
+    monkeypatch.setattr(MapWidget, "_run_js", fake_run_js)
+    monkeypatch.setattr(MapWidget, "__init__", lambda self, parent=None: None)
+
+    widget = MapWidget()
+    widget._station_color_map = {}
+    widget._station_index = 0
+    widget._follow_station_id = None
+
+    messages = [
+        V2xMessage(
+            timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=timezone.utc),
+            station_id="car-1",
+            msg_type=MessageType.CAM,
+            latitude=52.0 + (index / 1000.0),
+            longitude=13.0 + (index / 1000.0),
+        )
+        for index in range(10)
+    ]
+
+    widget.render_playback_slice(messages, 9)
+
+    trajectory_script = next(script for script in captured_scripts if "addTrajectory(" in script)
+    assert "52.0, 13.0" not in trajectory_script
+    assert "52.009" in trajectory_script
+
+
+def test_update_playback_position_follows_selected_station(monkeypatch):
+    captured_scripts = []
+
+    def fake_run_js(self, script):
+        captured_scripts.append(script)
+
+    monkeypatch.setattr(MapWidget, "_run_js", fake_run_js)
+    monkeypatch.setattr(MapWidget, "__init__", lambda self, parent=None: None)
+
+    widget = MapWidget()
+    widget._station_color_map = {}
+    widget._station_index = 0
+    widget._follow_station_id = "car-1"
+
+    msg = V2xMessage(
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        station_id="car-1",
+        msg_type=MessageType.CAM,
+        latitude=52.0,
+        longitude=13.0,
+    )
+
+    widget.update_playback_position(msg)
+
+    assert any("highlightMarker('station_car-1')" in script for script in captured_scripts)
+    assert any("followMarker('station_car-1')" in script for script in captured_scripts)

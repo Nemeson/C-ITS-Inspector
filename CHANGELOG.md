@@ -5,6 +5,44 @@ Dieses Changelog dokumentiert den aktuell rekonstruierten Entwicklungsstand der 
 Das Format orientiert sich an Keep a Changelog.  
 Eine lueckenlose Historie vor dem dokumentierten Stand wurde nicht rueckwirkend aus Commits rekonstruiert.
 
+## [1.4.0] - 2026-04-19
+
+### Added
+
+- MAP-Normalisierung fuer `laneRole`, `connections`, `targetLaneId` und Stopline-Fallback
+- Kartenlayer fuer `Inbound-Lanes`, `Outbound-Lanes`, `Connections`, `Stoplines` und `Requests`
+- SPAT-Faerbung auf Connection-Ebene statt nur auf kompletter Lane-Ebene
+- SRM/SSEM-Overlays auf Inbound-Lane, Outbound-Lane und Connection
+- Dominante vs. sekundaere Priorisierung mit visueller Abstufung
+- Seitliche Entzerrung mehrerer Priorisierungen auf derselben Connection
+- Operative Request-Zustaende im Szenenmodell:
+  `pending`, `acknowledged`, `granted`, `rejected`, `timeout`
+- Sichtbarkeit kuerzlich beantworteter Requests im Szenenpanel
+- Request-Legende im Szenenpanel
+- Tab-Struktur in der rechten Leiste mit `Details` und `Szene`
+- Detailanzeige fuer `Identitaets-Hinweis`
+- Tests fuer ASN.1-Schema-Updatepfad
+- Playback-spezifische Kartenregressionen fuer Slice-Rendering, kurzen Trail und Follow-Verhalten
+
+### Changed
+
+- Karte rendert beim Playback jetzt den Zustand bis zur aktuellen Wiedergabeposition statt den Endzustand der ganzen Datei
+- Bewegte Objekte zeigen im Playback nur noch einen kurzen Trail statt der gesamten bisherigen Historie
+- MAPEM und SPATEM werden nicht mehr als normale Marker gerendert, sondern nur noch als Infrastruktur-Layer
+- Karte bleibt beim Playback stabil und folgt einem Objekt nur nach explizitem Klick
+- ASN.1-Schema-Update invalidiert jetzt sauber In-Memory- und `.pkl`-Caches
+
+### Fixed
+
+- Kartenzustand aktualisierte sich beim Playback nicht zeitkonsistent
+- Ortsfeste RSU fuer MAP/SPAT wurde unnoetig als Marker dargestellt
+- ASN.1-Schema-Update scheiterte bei eingebettetem, nicht-leerem `assets/asn1`-Ordner ohne `.git`
+- Schema-Refresh arbeitete vorher mit potenziell veralteten kompilierten Caches weiter
+
+### Testing
+
+- Teststand nach aktueller Aenderungsrunde: `142 passed`
+
 ## [1.3.0] - 2026-04-18
 
 ### Added
@@ -15,12 +53,7 @@ Eine lueckenlose Historie vor dem dokumentierten Stand wurde nicht rueckwirkend 
 - globale Exception-Behandlung beim App-Start
 - PKI-/Security-Detailanzeige fuer ETSI-TS-103-097-bezogene Felder
 - Szenen-Aggregation mit `IntersectionState`, `SignalGroupState`, `SpatForecast`, `ActiveRequest` und `SceneSnapshot`
-- Szenenpanel in der UI mit
-- Kreuzungsstatus
-- offenen Anforderungen
-- Inline-Warnungen
-- 30s-Phasen-Timelines
-- Statistikfeldern fuer Nachrichtenrate und ETA-Abweichung
+- Szenenpanel in der UI mit Kreuzungsstatus, offenen Anforderungen, Inline-Warnungen und 30s-Phasen-Timelines
 - Clock-Skew-Erkennung zwischen SPAT-Zeit und PCAP-Zeitstempel
 - ETA-Verifikation ueber CAM-Trajektorien und MAP-Referenzpunkte
 - ASN.1-Schema-Update aus Git
@@ -53,7 +86,7 @@ Eine lueckenlose Historie vor dem dokumentierten Stand wurde nicht rueckwirkend 
 
 ### Planned
 
-- Flow-Freigabe-Check ueber MAP-Lane-Verknuepfungen
-- weitere Karten- und Visualisierungsfunktionen aus Phase 3
-- CSV-, GeoJSON- und GPX-Export
+- weitere GUI-Integrationstests fuer `main_window.py`
+- Offline-Kartenunterstuetzung
+- weitere Exportformate wie CSV, GeoJSON und GPX
 - tiefere PKI-Ketten- und Signaturvalidierung
