@@ -17,7 +17,7 @@ from collections import Counter
 from scapy.layers.dot11 import Dot11
 from scapy.layers.l2 import SNAP
 
-from .data_model import MessageType, SessionData, V2xMessage
+from .data_model import MessageSource, MessageType, SessionData, V2xMessage, infer_capture_role
 from .nmea_parser import parse_nmea_sentence
 
 logger = logging.getLogger(__name__)
@@ -1185,6 +1185,7 @@ def parse_pcap(
         session = SessionData()
 
     path = Path(pcap_path)
+    start_index = len(session.messages)
     if not path.exists():
         raise FileNotFoundError(f"PCAP file not found: {pcap_path}")
     if not path.suffix.lower() in (".pcap", ".pcapng", ".cap"):
@@ -1192,6 +1193,7 @@ def parse_pcap(
 
     if _tshark_available():
         logger.info("Using pyshark backend (TShark available)")
+        parser_backend = "pyshark"
         count = _parse_with_pyshark(
             pcap_path,
             session,
@@ -1200,12 +1202,27 @@ def parse_pcap(
         )
     else:
         logger.info("Using scapy backend (TShark not available)")
+        parser_backend = "scapy"
         count = _parse_with_scapy(
             pcap_path,
             session,
             progress_callback=progress_callback,
             cancel_check=cancel_check,
         )
+
+    role = infer_capture_role(str(path))
+    source = session.register_source(str(path), role, len(session.messages) - start_index)
+    for packet_index, msg in enumerate(session.messages[start_index:], start=1):
+        msg.source = MessageSource(
+            path=source.path,
+            filename=source.filename,
+            source_index=source.source_index,
+            role=source.role,
+            parser_backend=parser_backend,
+            packet_index=packet_index,
+        )
+        msg.details.setdefault("Capture-Datei", source.filename)
+        msg.details.setdefault("Capture-Rolle", source.role.value.upper())
 
     _annotate_cam_identity_outliers(session)
     session.finalize()

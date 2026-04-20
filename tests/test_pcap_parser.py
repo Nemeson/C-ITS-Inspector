@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pcap2kml_player.data_model import MessageType
+from pcap2kml_player.data_model import CaptureRole, MessageType
 from pcap2kml_player.pcap_parser import parse_pcap
 
 
@@ -32,6 +32,9 @@ def test_parse_txa_22082025_pcap() -> None:
     assert session.messages
     assert session.msg_type_counts[MessageType.SPATEM] > 0
     assert any(52.0 < msg.latitude < 53.0 for msg in session.messages)
+    assert session.sources[0].role == CaptureRole.TXA
+    assert all(msg.source is not None for msg in session.messages)
+    assert {msg.source.role for msg in session.messages if msg.source} == {CaptureRole.TXA}
 
 
 def test_parse_txa_22082025_pcap_decodes_mapem_and_spatem_payloads() -> None:

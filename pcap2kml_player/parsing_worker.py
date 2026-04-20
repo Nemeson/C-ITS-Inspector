@@ -53,6 +53,7 @@ class ParsingWorker(QObject):
         except Exception as exc:
             errors.append(str(exc))
 
+        session.finalize()
         self.finished.emit(session, self._paths, errors)
 
     @pyqtSlot()

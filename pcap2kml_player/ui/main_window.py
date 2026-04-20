@@ -41,6 +41,7 @@ from ..kml_exporter import export_kml
 from ..map_widget import MapWidget
 from ..parsing_worker import ParsingWorker
 from ..player_controller import SPEED_OPTIONS, PlayerController
+from .eta_graph_widget import EtaGraphWidget
 from ..scene_model import (
     ActiveRequest,
     RequestOperationalStatus,
@@ -59,9 +60,19 @@ COL_STATION = 1
 COL_MSGTYPE = 2
 COL_LATLON = 3
 COL_SPEED_HEADING = 4
-NUM_COLUMNS = 5
+COL_SOURCE = 5
+COL_MERGE = 6
+NUM_COLUMNS = 7
 
-TABLE_HEADERS = ["Timestamp", "Station ID", "Msg Type", "Lat / Lon", "Speed / Heading"]
+TABLE_HEADERS = [
+    "Timestamp",
+    "Station ID",
+    "Msg Type",
+    "Lat / Lon",
+    "Speed / Heading",
+    "Quelle",
+    "Merge",
+]
 SCENE_INTERSECTION_HEADERS = ["Intersection", "Revision", "Signalgruppen", "Prognose", "30s Timeline"]
 SCENE_REQUEST_HEADERS = ["Request", "Station", "Prio", "Status", "Lanes"]
 FORECAST_TIMELINE_BUCKETS = 15
@@ -84,6 +95,7 @@ class MainWindow(QMainWindow):
         self._active_types: set[MessageType] = set(MessageType)
         self._active_stations: set[str] = set()
         self._all_station_ids: set[str] = set()
+        self._show_canonical_messages = False
         self._loader_thread: Optional[QThread] = None
         self._loader_worker: Optional[ParsingWorker] = None
         self._message_row_lookup: dict[tuple[str, str], int] = {}
@@ -252,6 +264,12 @@ class MainWindow(QMainWindow):
         self._lbl_filter_hint = QLabel("Alle Typen und Stationen aktiv")
         self._lbl_filter_hint.setStyleSheet("color: #667891;")
         filter_layout.addWidget(self._lbl_filter_hint)
+        self._merge_view_checkbox = QCheckBox("Gemergte Sicht")
+        self._merge_view_checkbox.setToolTip(
+            "TXA/RXA-Mehrfachbeobachtungen nur einmal kanonisch anzeigen"
+        )
+        self._merge_view_checkbox.stateChanged.connect(self._on_merge_view_changed)
+        filter_layout.addWidget(self._merge_view_checkbox)
         filter_layout.addStretch()
         parent_layout.addWidget(filter_widget)
 
@@ -288,6 +306,7 @@ class MainWindow(QMainWindow):
         self._msg_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._msg_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._msg_table.setAlternatingRowColors(True)
+        self._apply_table_readability_style(self._msg_table)
         self._msg_table.verticalHeader().setVisible(False)
         table_layout.addWidget(self._msg_table)
 
@@ -321,6 +340,7 @@ class MainWindow(QMainWindow):
         self._detail_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._detail_table.verticalHeader().setVisible(False)
         self._detail_table.setAlternatingRowColors(True)
+        self._apply_table_readability_style(self._detail_table)
         self._detail_table.hide()
         details_layout.addWidget(self._detail_table, stretch=1)
         self._context_tabs.addTab(details_tab, "Details")
@@ -332,6 +352,13 @@ class MainWindow(QMainWindow):
         self._setup_scene_panel(scene_layout)
         self._context_tabs.addTab(scene_tab, "Szene")
 
+        eta_tab = QWidget()
+        eta_layout = QVBoxLayout(eta_tab)
+        eta_layout.setContentsMargins(10, 10, 10, 10)
+        eta_layout.setSpacing(8)
+        self._setup_eta_panel(eta_layout)
+        self._context_tabs.addTab(eta_tab, "ETA Analyse")
+
         self._right_splitter = QSplitter(Qt.Orientation.Vertical)
         self._right_splitter.addWidget(table_container)
         self._right_splitter.addWidget(self._context_tabs)
@@ -342,6 +369,26 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._right_splitter, stretch=1)
 
         return panel
+
+    def _apply_table_readability_style(self, table: QTableWidget) -> None:
+        """Use readable light-blue alternating rows and black selected text."""
+        table.setStyleSheet(
+            "QTableWidget {"
+            " background: #ffffff;"
+            " alternate-background-color: #eaf5ff;"
+            " color: #10233f;"
+            " gridline-color: #d7dde8;"
+            " selection-background-color: #cfe8ff;"
+            " selection-color: #000000;"
+            "}"
+            "QHeaderView::section {"
+            " background: #f5f7fb;"
+            " color: #10233f;"
+            " border: 1px solid #d7dde8;"
+            " padding: 4px;"
+            " font-weight: 700;"
+            "}"
+        )
 
     def _setup_scene_panel(self, parent_layout: QVBoxLayout) -> None:
         """Create the scene aggregation panel for phase forecasts and requests."""
@@ -396,6 +443,7 @@ class MainWindow(QMainWindow):
         self._scene_intersection_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._scene_intersection_table.verticalHeader().setVisible(False)
         self._scene_intersection_table.setAlternatingRowColors(True)
+        self._apply_table_readability_style(self._scene_intersection_table)
         self._scene_intersection_table.setMaximumHeight(170)
         self._scene_intersection_table.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -412,6 +460,7 @@ class MainWindow(QMainWindow):
         self._scene_requests_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._scene_requests_table.verticalHeader().setVisible(False)
         self._scene_requests_table.setAlternatingRowColors(True)
+        self._apply_table_readability_style(self._scene_requests_table)
         self._scene_requests_table.setMaximumHeight(150)
         self._scene_requests_table.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -423,6 +472,40 @@ class MainWindow(QMainWindow):
         scene_layout.addWidget(self._scene_requests_table)
 
         parent_layout.addWidget(self._scene_panel, stretch=2)
+
+    def _setup_eta_panel(self, parent_layout: QVBoxLayout) -> None:
+        """Create the ETA analysis graph tab."""
+        header = QLabel("ETA-Verlauf, Fahrzeuggeschwindigkeit und SRM/SSEM-Updates")
+        header.setStyleSheet("font-weight: 700; color: #10233f;")
+        parent_layout.addWidget(header)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.addWidget(QLabel("Einzelfahrzeug:"))
+        self._eta_station_combo = QComboBox()
+        self._eta_station_combo.setMinimumWidth(180)
+        controls.addWidget(self._eta_station_combo)
+        controls.addStretch()
+        parent_layout.addLayout(controls)
+
+        self._eta_summary = QLabel("Keine PCAP-Sitzung geladen.")
+        self._eta_summary.setWordWrap(True)
+        self._eta_summary.setStyleSheet("color: #42546b;")
+        parent_layout.addWidget(self._eta_summary)
+
+        self._eta_graph = EtaGraphWidget()
+        parent_layout.addWidget(self._eta_graph, stretch=1)
+
+        suggestions = QLabel(
+            "Darstellungsvorschlaege: ETA als blaue Restzeit-Kurve, Geschwindigkeit als "
+            "gruene Kurve mit rechter Skala, SRM/SREM als blaue Ereignislinien und SSEM "
+            "farbcodiert nach Status (granted=gruen, acknowledged=gelb, rejected=rot). "
+            "Optional spaeter: separater Haupt-Tab neben der Karte, Detail-Tooltip pro Marker "
+            "oder Split-View Karte + Graph fuer Live-Korrelation."
+        )
+        suggestions.setWordWrap(True)
+        suggestions.setStyleSheet("color: #667891; font-size: 11px;")
+        parent_layout.addWidget(suggestions)
 
     def _setup_playback_controls(self, parent_layout: QVBoxLayout) -> None:
         """Create the playback control bar."""
@@ -480,6 +563,7 @@ class MainWindow(QMainWindow):
         self._msg_table.cellClicked.connect(self._on_table_row_clicked)
         self._btn_toggle_message_table.toggled.connect(self._toggle_message_table_maximized)
         self._context_tabs.currentChanged.connect(self._on_context_tab_changed)
+        self._eta_station_combo.currentTextChanged.connect(self._on_eta_station_changed)
 
         self._player.tick.connect(self._on_playback_tick)
         self._player.state_changed.connect(self._on_player_state_changed)
@@ -574,6 +658,7 @@ class MainWindow(QMainWindow):
         self._populate_message_table(session.messages)
         self._map_widget.load_messages(session.messages)
         self._player.set_session(session)
+        self._refresh_eta_analysis(session.messages)
         self._detail_table.hide()
         self._update_scene_for_message(session.messages[0])
         self._update_controls_enabled(True)
@@ -640,6 +725,7 @@ class MainWindow(QMainWindow):
                     if self._active_stations != self._all_station_ids
                     else None
                 ),
+                canonical=self._show_canonical_messages,
             )
         except Exception as exc:  # pragma: no cover
             QMessageBox.critical(self, "Export-Fehler", str(exc))
@@ -681,6 +767,11 @@ class MainWindow(QMainWindow):
         }
         self._apply_filters()
 
+    def _on_merge_view_changed(self, *_args) -> None:
+        """Switch between raw observations and canonical merged messages."""
+        self._show_canonical_messages = self._merge_view_checkbox.isChecked()
+        self._apply_filters()
+
     def _on_station_filter_changed(self) -> None:
         """Handle station filter changes."""
         self._active_stations = {item.text() for item in self._station_list.selectedItems()}
@@ -693,7 +784,11 @@ class MainWindow(QMainWindow):
         if not self._session:
             return
 
-        filtered = self._session.filter_messages(self._active_types, self._active_stations)
+        filtered = self._session.filter_messages(
+            self._active_types,
+            self._active_stations,
+            canonical=self._show_canonical_messages,
+        )
         self._populate_message_table(filtered)
         self._map_widget.load_messages(filtered)
         self._player.set_filtered_messages(filtered)
@@ -750,6 +845,14 @@ class MainWindow(QMainWindow):
                 COL_SPEED_HEADING,
                 QTableWidgetItem(f"{speed_str} / {heading_str}"),
             )
+            source_text = msg.source.display_name() if msg.source is not None else "-"
+            merge_text = "-"
+            if msg.merge_group_id:
+                merge_text = msg.merge_group_id
+                if msg.merge_confidence is not None:
+                    merge_text += f" ({msg.merge_confidence:.2f})"
+            self._msg_table.setItem(row, COL_SOURCE, QTableWidgetItem(source_text))
+            self._msg_table.setItem(row, COL_MERGE, QTableWidgetItem(merge_text))
 
     def _on_playback_tick(self, msg: Optional[V2xMessage]) -> None:
         """Update map and details when the visible playback message changes."""
@@ -761,6 +864,7 @@ class MainWindow(QMainWindow):
         self._highlight_table_row(msg)
         self._show_security_detail(msg, auto_focus=False)
         self._update_scene_for_message(msg)
+        self._eta_graph.set_current_time(msg.timestamp)
 
     def _highlight_table_row(self, msg: V2xMessage) -> None:
         """Select the matching row and only scroll when it leaves the viewport."""
@@ -821,6 +925,38 @@ class MainWindow(QMainWindow):
             auto_focus=False,
             force_refresh=True,
         )
+
+    def _refresh_eta_analysis(self, messages: list[V2xMessage]) -> None:
+        """Populate the ETA graph vehicle selector from the loaded session."""
+        candidate_station_ids = sorted(
+            {
+                msg.station_id
+                for msg in messages
+                if msg.msg_type in {MessageType.CAM, MessageType.SREM, MessageType.NMEA}
+                or msg.speed is not None
+            }
+        )
+        if not candidate_station_ids:
+            candidate_station_ids = sorted({msg.station_id for msg in messages})
+
+        current_station = self._eta_station_combo.currentText()
+        self._eta_station_combo.blockSignals(True)
+        self._eta_station_combo.clear()
+        self._eta_station_combo.addItems(candidate_station_ids)
+        if current_station in candidate_station_ids:
+            self._eta_station_combo.setCurrentText(current_station)
+        self._eta_station_combo.blockSignals(False)
+
+        selected_station = self._eta_station_combo.currentText() or None
+        self._eta_graph.set_messages(messages)
+        self._eta_graph.set_station(selected_station)
+        self._eta_graph.set_current_time(messages[0].timestamp if messages else None)
+        self._eta_summary.setText(self._eta_graph.summary_text())
+
+    def _on_eta_station_changed(self, station_id: str) -> None:
+        """Update the ETA graph when a single vehicle is selected."""
+        self._eta_graph.set_station(station_id or None)
+        self._eta_summary.setText(self._eta_graph.summary_text())
 
     def _toggle_message_table_maximized(self, maximized: bool) -> None:
         """Expand the message table by collapsing the lower context tabs."""
@@ -1270,6 +1406,16 @@ class MainWindow(QMainWindow):
         self._pending_detail_message = None
         self._detail_table.hide()
         self._clear_scene_panel()
+        if hasattr(self, "_eta_station_combo"):
+            self._eta_station_combo.blockSignals(True)
+            self._eta_station_combo.clear()
+            self._eta_station_combo.blockSignals(False)
+        if hasattr(self, "_eta_graph"):
+            self._eta_graph.set_messages([])
+            self._eta_graph.set_station(None)
+            self._eta_graph.set_current_time(None)
+        if hasattr(self, "_eta_summary"):
+            self._eta_summary.setText("Keine PCAP-Sitzung geladen.")
         if hasattr(self, "_context_tabs"):
             self._context_tabs.setCurrentIndex(1)
             self._context_tabs.setVisible(True)
@@ -1285,6 +1431,11 @@ class MainWindow(QMainWindow):
         self._all_station_ids.clear()
         self._active_stations.clear()
         self._station_list.clear()
+        self._show_canonical_messages = False
+        if hasattr(self, "_merge_view_checkbox"):
+            self._merge_view_checkbox.blockSignals(True)
+            self._merge_view_checkbox.setChecked(False)
+            self._merge_view_checkbox.blockSignals(False)
         self._lbl_filter_hint.setText("Alle Typen und Stationen aktiv")
         self._update_controls_enabled(False)
 

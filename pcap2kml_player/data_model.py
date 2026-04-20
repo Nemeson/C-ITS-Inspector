@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 
@@ -21,6 +22,53 @@ class MessageType(Enum):
     MAPEM = "MAPEM"
     SPATEM = "SPATEM"
     NMEA = "NMEA"
+
+
+class CaptureRole(Enum):
+    """Best-effort role of a loaded capture file."""
+    TXA = "txa"
+    RXA = "rxa"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class CaptureSource:
+    """Metadata for one loaded PCAP/capture file."""
+    path: str
+    source_index: int
+    role: CaptureRole = CaptureRole.UNKNOWN
+    message_count: int = 0
+
+    @property
+    def filename(self) -> str:
+        """Return the display filename for this capture source."""
+        return Path(self.path).name
+
+
+@dataclass
+class MessageSource:
+    """Provenance for one decoded V2X/NMEA message."""
+    path: str
+    filename: str
+    source_index: int
+    role: CaptureRole = CaptureRole.UNKNOWN
+    parser_backend: Optional[str] = None
+    packet_index: Optional[int] = None
+
+    def display_name(self) -> str:
+        """Return compact source text for tables, details, and exports."""
+        role = self.role.value.upper()
+        return f"{self.filename} ({role})"
+
+
+@dataclass
+class MergedObservation:
+    """A soft-merged group of observations that likely describe one event."""
+    merge_id: str
+    canonical_key: tuple[str, str, str]
+    confidence: float
+    reason: str
+    observation_keys: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -38,6 +86,10 @@ class V2xMessage:
     details: dict[str, str] = field(default_factory=dict)
     security_info: Optional[SecurityInfo] = None
     decoded_data: dict = field(default_factory=dict)
+    source: Optional[MessageSource] = None
+    merge_group_id: Optional[str] = None
+    merge_confidence: Optional[float] = None
+    merge_reason: Optional[str] = None
     """Structured fields extracted from the ASN.1-decoded ITS PDU.
 
     Message-type-specific keys (Phase 2.1 — ETSI TS 103 301 / EN 302 637):
@@ -58,6 +110,17 @@ class V2xMessage:
             f"<b>Time:</b> {self.timestamp.isoformat()}",
             f"<b>Lat/Lon:</b> {self.latitude:.6f}, {self.longitude:.6f}",
         ]
+        if self.source is not None:
+            parts.append(f"<b>Source:</b> {self.source.display_name()}")
+        if self.merge_group_id:
+            parts.append(
+                f"<b>Merge:</b> {self.merge_group_id}"
+                + (
+                    f" ({self.merge_confidence:.2f})"
+                    if self.merge_confidence is not None
+                    else ""
+                )
+            )
         if self.altitude is not None:
             parts.append(f"<b>Altitude:</b> {self.altitude:.1f} m")
         if self.speed is not None:
@@ -74,6 +137,18 @@ class V2xMessage:
             ("Zeit", self.timestamp.isoformat()),
             ("Position", f"{self.latitude:.6f}, {self.longitude:.6f}"),
         ]
+        if self.source is not None:
+            rows.append(("Capture-Datei", self.source.filename))
+            rows.append(("Capture-Rolle", self.source.role.value.upper()))
+            if self.source.parser_backend:
+                rows.append(("Parser", self.source.parser_backend))
+        if self.merge_group_id:
+            merge_text = self.merge_group_id
+            if self.merge_confidence is not None:
+                merge_text += f" ({self.merge_confidence:.2f})"
+            if self.merge_reason:
+                merge_text += f" - {self.merge_reason}"
+            rows.append(("Merge-Gruppe", merge_text))
         identity_hint = self.details.get("Identitaets-Hinweis")
         if identity_hint:
             rows.append(("Identitaets-Hinweis", identity_hint))
@@ -175,6 +250,8 @@ class SessionData:
     messages: list[V2xMessage] = field(default_factory=list)
     station_ids: set[str] = field(default_factory=set)
     msg_type_counts: dict[MessageType, int] = field(default_factory=dict)
+    sources: list[CaptureSource] = field(default_factory=list)
+    merge_groups: dict[str, MergedObservation] = field(default_factory=dict)
 
     @property
     def time_range(self) -> tuple[datetime, datetime]:
@@ -197,17 +274,81 @@ class SessionData:
         self.station_ids.add(msg.station_id)
         self.msg_type_counts[msg.msg_type] = self.msg_type_counts.get(msg.msg_type, 0) + 1
 
-    def finalize(self) -> None:
+    def register_source(self, path: str, role: CaptureRole, message_count: int) -> CaptureSource:
+        """Register or update metadata for one capture source."""
+        normalized = str(Path(path).resolve())
+        for source in self.sources:
+            if source.path == normalized:
+                source.role = role
+                source.message_count = message_count
+                return source
+        source = CaptureSource(
+            path=normalized,
+            source_index=len(self.sources),
+            role=role,
+            message_count=message_count,
+        )
+        self.sources.append(source)
+        return source
+
+    def finalize(self, *, build_merge_groups: bool = True) -> None:
         """Sort messages by timestamp after all parsing is complete."""
         self.messages.sort(key=lambda m: m.timestamp)
+        if build_merge_groups:
+            self.rebuild_merge_groups()
+
+    def rebuild_merge_groups(self) -> None:
+        """Recalculate soft-merge groups for the current message stream."""
+        from .merge_model import build_merge_groups
+
+        self.merge_groups = build_merge_groups(self.messages)
+
+    def canonical_messages(self) -> list[V2xMessage]:
+        """Return one canonical message per merge group plus unmerged messages."""
+        canonical_keys_by_merge = {
+            merge_id: group.canonical_key
+            for merge_id, group in self.merge_groups.items()
+            if len(group.observation_keys) > 1
+        }
+        seen_merge_ids: set[str] = set()
+        result: list[V2xMessage] = []
+        for msg in self.messages:
+            key = message_identity_key(msg)
+            if msg.merge_group_id and msg.merge_group_id in self.merge_groups:
+                if msg.merge_group_id in seen_merge_ids:
+                    continue
+                if key == canonical_keys_by_merge.get(msg.merge_group_id):
+                    result.append(msg)
+                    seen_merge_ids.add(msg.merge_group_id)
+                continue
+            result.append(msg)
+        return result
 
     def filter_messages(
         self,
         active_types: set[MessageType],
         active_stations: set[str],
+        *,
+        canonical: bool = False,
     ) -> list[V2xMessage]:
         """Return messages matching the given type and station filters."""
+        messages = self.canonical_messages() if canonical else self.messages
         return [
-            m for m in self.messages
+            m for m in messages
             if m.msg_type in active_types and m.station_id in active_stations
         ]
+
+
+def infer_capture_role(path: str) -> CaptureRole:
+    """Infer TXA/RXA capture role from the filename using conservative tokens."""
+    name = Path(path).name.lower()
+    if any(token in name for token in ("txa", "_tx", "-tx", "transmit", "send")):
+        return CaptureRole.TXA
+    if any(token in name for token in ("rxa", "_rx", "-rx", "receive", "recv")):
+        return CaptureRole.RXA
+    return CaptureRole.UNKNOWN
+
+
+def message_identity_key(msg: V2xMessage) -> tuple[str, str, str]:
+    """Return a stable in-session key for one message."""
+    return (msg.timestamp.isoformat(), msg.station_id, msg.msg_type.value)

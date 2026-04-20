@@ -6,7 +6,13 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from pcap2kml_player.data_model import MessageType, SessionData, V2xMessage
+from pcap2kml_player.data_model import (
+    CaptureRole,
+    MessageSource,
+    MessageType,
+    SessionData,
+    V2xMessage,
+)
 from pcap2kml_player.kml_exporter import MSG_TYPE_COLORS, export_kml
 
 NS = {"kml": "http://www.opengis.net/kml/2.2"}
@@ -124,3 +130,41 @@ def test_export_kml_avoids_filename_collisions_after_sanitizing(tmp_path: Path):
 
 def test_kml_message_type_colors_are_unique():
     assert len(set(MSG_TYPE_COLORS.values())) == len(MSG_TYPE_COLORS)
+
+
+def test_export_kml_can_use_canonical_merged_messages(tmp_path: Path):
+    base = datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc)
+    tx = V2xMessage(
+        timestamp=base,
+        station_id="bus-7",
+        msg_type=MessageType.SREM,
+        latitude=52.0,
+        longitude=13.0,
+        raw_payload=b"same",
+        source=MessageSource("C:/captures/txa_case.pcap", "txa_case.pcap", 0, CaptureRole.TXA),
+        decoded_data={"intersectionId": 42, "requestId": 11, "sequenceNumber": 2},
+    )
+    rx = V2xMessage(
+        timestamp=base + timedelta(milliseconds=80),
+        station_id="bus-7",
+        msg_type=MessageType.SREM,
+        latitude=52.0,
+        longitude=13.0,
+        raw_payload=b"same",
+        source=MessageSource("C:/captures/rxa_case.pcap", "rxa_case.pcap", 1, CaptureRole.RXA),
+        decoded_data={"intersectionId": 42, "requestId": 11, "sequenceNumber": 2},
+    )
+    session = SessionData()
+    session.add_message(tx)
+    session.add_message(rx)
+    session.finalize()
+
+    created = export_kml(session, tmp_path, canonical=True, include_trajectory=False)
+
+    assert len(created) == 1
+    root = ET.parse(created[0]).getroot()
+    placemarks = root.findall(".//kml:Placemark", NS)
+    description = root.findtext(".//kml:Document/kml:description", namespaces=NS)
+    assert len(placemarks) == 1
+    assert description is not None
+    assert "Merge-Gruppen: 1" in description

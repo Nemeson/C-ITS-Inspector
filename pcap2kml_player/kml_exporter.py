@@ -88,6 +88,7 @@ def export_kml(
     active_types: Optional[set[MessageType]] = None,
     active_stations: Optional[set[str]] = None,
     include_trajectory: bool = True,
+    canonical: bool = False,
 ) -> list[Path]:
     """Export session data as KML files (one per station ID).
 
@@ -97,6 +98,7 @@ def export_kml(
         active_types: Optional filter — only these message types.
         active_stations: Optional filter — only these station IDs.
         include_trajectory: Whether to include LineString trajectories.
+        canonical: Export one canonical observation per soft-merge group.
 
     Returns:
         List of paths to created KML files.
@@ -109,9 +111,11 @@ def export_kml(
     types_filter = active_types or set(MsgType for MsgType in MessageType)
     stations_filter = active_stations or session.station_ids
 
+    export_messages = session.canonical_messages() if canonical else session.messages
+
     # Group messages by station ID
     stations: dict[str, list[V2xMessage]] = {}
-    for msg in session.messages:
+    for msg in export_messages:
         if msg.msg_type not in types_filter:
             continue
         if msg.station_id not in stations_filter:
@@ -127,6 +131,24 @@ def export_kml(
         kml.document.name = f"PCAP2KML - Station {station_id}"
         if schema_provenance:
             kml.document.description = schema_provenance
+        if session.sources or session.merge_groups:
+            provenance_parts = []
+            if schema_provenance:
+                provenance_parts.append(schema_provenance)
+            if session.sources:
+                provenance_parts.append(
+                    "Quellen: "
+                    + "; ".join(
+                        f"{source.filename} ({source.role.value.upper()}, {source.message_count} Msgs)"
+                        for source in session.sources
+                    )
+                )
+            if session.merge_groups:
+                view = "kanonisch" if canonical else "alle Beobachtungen"
+                provenance_parts.append(
+                    f"Merge-Gruppen: {len(session.merge_groups)}; Export-Sicht: {view}"
+                )
+            kml.document.description = "<br>".join(provenance_parts)
 
         # Add placemarks for each message
         for msg in messages:

@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from pcap2kml_player.data_model import MessageType, SessionData, V2xMessage
+from pcap2kml_player.data_model import (
+    CaptureRole,
+    MessageSource,
+    MessageType,
+    SessionData,
+    V2xMessage,
+    infer_capture_role,
+)
 
 
 def _make_message(
@@ -91,3 +98,37 @@ def test_detail_rows_surface_identity_hint_early() -> None:
     assert rows[4][0] == "Identitaets-Hinweis"
     assert "dominanten Session-ID" in rows[4][1]
     assert rows[-1] == ("Quelle", "lpv")
+
+
+def test_infer_capture_role_from_txa_rxa_filenames() -> None:
+    assert infer_capture_role("txa_22082025.pcap") == CaptureRole.TXA
+    assert infer_capture_role("rsu_rxa.pcap") == CaptureRole.RXA
+    assert infer_capture_role("neutral.pcap") == CaptureRole.UNKNOWN
+
+
+def test_detail_rows_include_source_and_merge_metadata() -> None:
+    msg = V2xMessage(
+        timestamp=datetime(2025, 8, 22, 12, 0, 0),
+        station_id="car-7",
+        msg_type=MessageType.SREM,
+        latitude=52.0,
+        longitude=13.0,
+        source=MessageSource(
+            path="C:/captures/txa_case.pcap",
+            filename="txa_case.pcap",
+            source_index=0,
+            role=CaptureRole.TXA,
+            parser_backend="scapy",
+        ),
+        merge_group_id="merge-00001",
+        merge_confidence=0.94,
+        merge_reason="Request-Key gleich",
+    )
+
+    rows = dict(msg.to_detail_rows())
+
+    assert rows["Capture-Datei"] == "txa_case.pcap"
+    assert rows["Capture-Rolle"] == "TXA"
+    assert rows["Parser"] == "scapy"
+    assert "merge-00001" in rows["Merge-Gruppe"]
+    assert "0.94" in rows["Merge-Gruppe"]
