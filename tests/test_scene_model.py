@@ -579,3 +579,94 @@ def test_build_scene_snapshot_detects_raw_map_and_spat_in_real_test_pcap():
     assert scene.intersections
     assert any(intersection.map_revision is not None for intersection in scene.intersections.values())
     assert any(intersection.spat_revision is not None for intersection in scene.intersections.values())
+
+
+def test_real_rsu_srem_ssem_builds_granted_request_visuals():
+    session = parse_pcap(
+        str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap")
+    )
+    parse_pcap(
+        str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_txa.pcap"),
+        session,
+    )
+    session.finalize()
+
+    scene = build_scene_snapshot(session.messages, session.messages[-1].timestamp)
+    request_visuals = [
+        visual
+        for visuals in scene.request_visuals_by_intersection.values()
+        for visual in visuals
+    ]
+
+    assert scene.request_states
+    assert any(request.intersection_id == 72 for request in scene.request_states)
+    assert any(request.request_id == 6 for request in scene.request_states)
+    assert any(request.sequence_number == 86 and request.ssem_status == "granted" for request in scene.request_states)
+    assert request_visuals
+    assert any(visual.status == RequestOperationalStatus.GRANTED for visual in request_visuals)
+
+
+def test_eta_verification_uses_inbound_lane_stopline_before_map_reference(now):
+    map_msg = V2xMessage(
+        timestamp=now - timedelta(seconds=5),
+        station_id="rsu-1",
+        msg_type=MessageType.MAPEM,
+        latitude=52.0,
+        longitude=13.0,
+        decoded_data={
+            "intersections": [
+                {
+                    "intersectionId": 42,
+                    "refPoint": {"lat": 52.0, "lon": 13.0},
+                    "laneSet": [
+                        {
+                            "laneID": 4,
+                            "stopLine": {
+                                "points": [
+                                    {"lat": 52.0010, "lon": 13.0010},
+                                    {"lat": 52.0010, "lon": 13.0011},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    srem_msg = V2xMessage(
+        timestamp=now,
+        station_id="bus-7",
+        msg_type=MessageType.SREM,
+        latitude=52.002,
+        longitude=13.002,
+        decoded_data={
+            "intersectionId": 42,
+            "requestId": 11,
+            "sequenceNumber": 2,
+            "inLane": 4,
+            "eta": now + timedelta(seconds=8),
+        },
+    )
+    cam_near_reference = V2xMessage(
+        timestamp=now + timedelta(seconds=1),
+        station_id="bus-7",
+        msg_type=MessageType.CAM,
+        latitude=52.0,
+        longitude=13.0,
+    )
+    cam_at_stopline = V2xMessage(
+        timestamp=now + timedelta(seconds=9),
+        station_id="bus-7",
+        msg_type=MessageType.CAM,
+        latitude=52.0010,
+        longitude=13.00105,
+    )
+
+    scene = build_scene_snapshot(
+        [map_msg, srem_msg, cam_near_reference, cam_at_stopline],
+        now + timedelta(seconds=10),
+    )
+
+    assert len(scene.eta_verifications) == 1
+    assert scene.eta_verifications[0].actual_arrival == cam_at_stopline.timestamp
+    assert scene.eta_verifications[0].delta_seconds == pytest.approx(1.0)

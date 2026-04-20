@@ -33,6 +33,12 @@ INFRASTRUCTURE_MESSAGE_COLORS = {
     MessageType.MAPEM: "#1f9d55",
     MessageType.SPATEM: "#c026d3",
 }
+NON_STATION_MARKER_TYPES = {
+    MessageType.MAPEM,
+    MessageType.SPATEM,
+    MessageType.SSEM,
+}
+SHOW_INFRASTRUCTURE_POINT_OVERLAYS = False
 LANE_ROLE_COLORS = {
     "inbound": "#0f766e",
     "outbound": "#2563eb",
@@ -655,25 +661,26 @@ def _infrastructure_overlays_for_messages(messages: list[V2xMessage]) -> list[di
                 if intersection_numeric_id is not None
                 else []
             )
-            overlays.append({
-                "kind": "circle",
-                "id": f"{key}_map_circle",
-                "lat": map_point[0],
-                "lon": map_point[1],
-                "radius": 20,
-                "color": INFRASTRUCTURE_MESSAGE_COLORS[MessageType.MAPEM],
-                "popup": map_popup,
-                "layer": "map",
-            })
-            overlays.append({
-                "kind": "label",
-                "id": f"{key}_map_label",
-                "lat": map_point[0],
-                "lon": map_point[1],
-                "text": map_popup,
-                "color": INFRASTRUCTURE_MESSAGE_COLORS[MessageType.MAPEM],
-                "layer": "map",
-            })
+            if SHOW_INFRASTRUCTURE_POINT_OVERLAYS:
+                overlays.append({
+                    "kind": "circle",
+                    "id": f"{key}_map_circle",
+                    "lat": map_point[0],
+                    "lon": map_point[1],
+                    "radius": 20,
+                    "color": INFRASTRUCTURE_MESSAGE_COLORS[MessageType.MAPEM],
+                    "popup": map_popup,
+                    "layer": "map",
+                })
+                overlays.append({
+                    "kind": "label",
+                    "id": f"{key}_map_label",
+                    "lat": map_point[0],
+                    "lon": map_point[1],
+                    "text": map_popup,
+                    "color": INFRASTRUCTURE_MESSAGE_COLORS[MessageType.MAPEM],
+                    "layer": "map",
+                })
 
             lane_set = map_intersection.get("laneSet")
             if not isinstance(lane_set, list):
@@ -861,25 +868,26 @@ def _infrastructure_overlays_for_messages(messages: list[V2xMessage]) -> list[di
             spat_point = _intersection_point(spat_intersection, spat_msg)
             spat_popup = _intersection_popup(spat_msg, spat_intersection, "SPATEM Intersection")
             spat_color = _spat_color_for_intersection(spat_intersection)
-            overlays.append({
-                "kind": "circle",
-                "id": f"{key}_spat_circle",
-                "lat": spat_point[0],
-                "lon": spat_point[1],
-                "radius": 28,
-                "color": spat_color,
-                "popup": spat_popup,
-                "layer": "spat",
-            })
-            overlays.append({
-                "kind": "label",
-                "id": f"{key}_spat_label",
-                "lat": spat_point[0],
-                "lon": spat_point[1],
-                "text": spat_popup,
-                "color": spat_color,
-                "layer": "spat",
-            })
+            if SHOW_INFRASTRUCTURE_POINT_OVERLAYS:
+                overlays.append({
+                    "kind": "circle",
+                    "id": f"{key}_spat_circle",
+                    "lat": spat_point[0],
+                    "lon": spat_point[1],
+                    "radius": 28,
+                    "color": spat_color,
+                    "popup": spat_popup,
+                    "layer": "spat",
+                })
+                overlays.append({
+                    "kind": "label",
+                    "id": f"{key}_spat_label",
+                    "lat": spat_point[0],
+                    "lon": spat_point[1],
+                    "text": spat_popup,
+                    "color": spat_color,
+                    "layer": "spat",
+                })
 
     return overlays
 
@@ -946,24 +954,24 @@ LEAFLET_HTML = """<!DOCTYPE html>
         var overlayGroups = {
             markers: L.layerGroup().addTo(map),
             trajectories: L.layerGroup().addTo(map),
-            map: L.layerGroup().addTo(map),
+            map: L.layerGroup(),
             map_inbound: L.layerGroup().addTo(map),
             map_outbound: L.layerGroup().addTo(map),
             map_connections: L.layerGroup().addTo(map),
             map_stoplines: L.layerGroup().addTo(map),
             map_requests: L.layerGroup().addTo(map),
-            spat: L.layerGroup().addTo(map)
+            spat: L.layerGroup()
         };
         var overlayControl = L.control.layers(null, {
             'Stationen': overlayGroups.markers,
             'Trajektorien': overlayGroups.trajectories,
-            'MAP-Infrastruktur': overlayGroups.map,
+            'MAP-Punkte': overlayGroups.map,
             'Inbound-Lanes': overlayGroups.map_inbound,
             'Outbound-Lanes': overlayGroups.map_outbound,
             'Connections': overlayGroups.map_connections,
             'Stoplines': overlayGroups.map_stoplines,
             'Requests': overlayGroups.map_requests,
-            'SPAT-Status': overlayGroups.spat
+            'SPAT-Punkte': overlayGroups.spat
         }, {collapsed: false}).addTo(map);
         var stationColors = {};
 
@@ -1299,7 +1307,7 @@ class MapWidget(QWebEngineView):
                 f"Pos: {msg.latitude:.6f}, {msg.longitude:.6f}"
             )
 
-            if msg.msg_type not in INFRASTRUCTURE_MESSAGE_COLORS:
+            if msg.msg_type not in NON_STATION_MARKER_TYPES:
                 # Place/update the current dynamic marker at the latest visible position.
                 marker_id_raw = _marker_id_for_message(msg)
                 marker_id = _js_escape(marker_id_raw)
@@ -1313,7 +1321,7 @@ class MapWidget(QWebEngineView):
                 )
 
             # Collect trajectory coordinates
-            if msg.msg_type not in INFRASTRUCTURE_MESSAGE_COLORS:
+            if msg.msg_type not in NON_STATION_MARKER_TYPES:
                 station_coords.setdefault(msg.station_id, []).append(
                     [msg.latitude, msg.longitude]
                 )

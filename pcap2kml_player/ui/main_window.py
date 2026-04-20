@@ -41,7 +41,7 @@ from ..kml_exporter import export_kml
 from ..map_widget import MapWidget
 from ..parsing_worker import ParsingWorker
 from ..player_controller import SPEED_OPTIONS, PlayerController
-from .eta_graph_widget import EtaGraphWidget
+from .eta_graph_widget import EtaGraphWidget, build_eta_selection_options
 from ..scene_model import (
     ActiveRequest,
     RequestOperationalStatus,
@@ -481,7 +481,7 @@ class MainWindow(QMainWindow):
 
         controls = QHBoxLayout()
         controls.setContentsMargins(0, 0, 0, 0)
-        controls.addWidget(QLabel("Einzelfahrzeug:"))
+        controls.addWidget(QLabel("Request/Merge-Spur:"))
         self._eta_station_combo = QComboBox()
         self._eta_station_combo.setMinimumWidth(180)
         controls.addWidget(self._eta_station_combo)
@@ -497,11 +497,10 @@ class MainWindow(QMainWindow):
         parent_layout.addWidget(self._eta_graph, stretch=1)
 
         suggestions = QLabel(
-            "Darstellungsvorschlaege: ETA als blaue Restzeit-Kurve, Geschwindigkeit als "
-            "gruene Kurve mit rechter Skala, SRM/SREM als blaue Ereignislinien und SSEM "
-            "farbcodiert nach Status (granted=gruen, acknowledged=gelb, rejected=rot). "
-            "Optional spaeter: separater Haupt-Tab neben der Karte, Detail-Tooltip pro Marker "
-            "oder Split-View Karte + Graph fuer Live-Korrelation."
+            "ETA-Diagnose: Restzeit bis MAP-Stopline als blaue Kurve, geglaettete "
+            "Geschwindigkeit als gruene Kurve, SREM als vertikale Ereignislinien und "
+            "SSEM als farbige Statusbaender. Diagnosemarker zeigen ETA-Spruenge, "
+            "fehlende SSEM, spaetes/fehlendes granted und Stopline-Passage ohne granted."
         )
         suggestions.setWordWrap(True)
         suggestions.setStyleSheet("color: #667891; font-size: 11px;")
@@ -928,34 +927,28 @@ class MainWindow(QMainWindow):
 
     def _refresh_eta_analysis(self, messages: list[V2xMessage]) -> None:
         """Populate the ETA graph vehicle selector from the loaded session."""
-        candidate_station_ids = sorted(
-            {
-                msg.station_id
-                for msg in messages
-                if msg.msg_type in {MessageType.CAM, MessageType.SREM, MessageType.NMEA}
-                or msg.speed is not None
-            }
-        )
-        if not candidate_station_ids:
-            candidate_station_ids = sorted({msg.station_id for msg in messages})
-
-        current_station = self._eta_station_combo.currentText()
+        options = build_eta_selection_options(messages)
+        current_key = self._eta_station_combo.currentData()
         self._eta_station_combo.blockSignals(True)
         self._eta_station_combo.clear()
-        self._eta_station_combo.addItems(candidate_station_ids)
-        if current_station in candidate_station_ids:
-            self._eta_station_combo.setCurrentText(current_station)
+        for option in options:
+            self._eta_station_combo.addItem(option.label, option.key)
+        if current_key:
+            for index in range(self._eta_station_combo.count()):
+                if self._eta_station_combo.itemData(index) == current_key:
+                    self._eta_station_combo.setCurrentIndex(index)
+                    break
         self._eta_station_combo.blockSignals(False)
 
-        selected_station = self._eta_station_combo.currentText() or None
+        selected_key = self._eta_station_combo.currentData()
         self._eta_graph.set_messages(messages)
-        self._eta_graph.set_station(selected_station)
+        self._eta_graph.set_selection(selected_key)
         self._eta_graph.set_current_time(messages[0].timestamp if messages else None)
         self._eta_summary.setText(self._eta_graph.summary_text())
 
     def _on_eta_station_changed(self, station_id: str) -> None:
         """Update the ETA graph when a single vehicle is selected."""
-        self._eta_graph.set_station(station_id or None)
+        self._eta_graph.set_selection(self._eta_station_combo.currentData())
         self._eta_summary.setText(self._eta_graph.summary_text())
 
     def _toggle_message_table_maximized(self, maximized: bool) -> None:

@@ -272,4 +272,6 @@ def _coerce_int(value: object) -> Optional[int]:
             coerced = _coerce_int(value.get(key))
             if coerced is not None:
                 return coerced
+    if isinstance(value, tuple) and len(value) == 2:
+        return _coerce_int(value[1])
     return None

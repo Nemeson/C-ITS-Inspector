@@ -64,6 +64,37 @@ def test_parse_txa_22082025_pcap_decodes_mapem_and_spatem_payloads() -> None:
     assert "stateTimeSpeed" in spat_state
 
 
+def test_parse_rsu_srem_extracts_request_correlation_and_lanes() -> None:
+    session = parse_pcap(
+        str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap")
+    )
+
+    srem_messages = [msg for msg in session.messages if msg.msg_type == MessageType.SREM]
+
+    assert srem_messages
+    assert all(msg.decoded_data.get("intersectionId") == 72 for msg in srem_messages)
+    assert all(msg.decoded_data.get("requestId") == 6 for msg in srem_messages)
+    assert all(msg.decoded_data.get("sequenceNumber") is not None for msg in srem_messages)
+    assert all(msg.decoded_data.get("inLane") == 1 for msg in srem_messages)
+    assert all(msg.decoded_data.get("outLane") == 3 for msg in srem_messages)
+    assert all(msg.decoded_data.get("requestorType") == "publicTransport" for msg in srem_messages)
+
+
+def test_parse_rsu_ssem_extracts_request_id_not_requestor_station_id() -> None:
+    session = parse_pcap(
+        str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_txa.pcap")
+    )
+
+    ssem_messages = [msg for msg in session.messages if msg.msg_type == MessageType.SSEM]
+
+    assert ssem_messages
+    assert all(msg.decoded_data.get("intersectionId") == 72 for msg in ssem_messages)
+    assert all(msg.decoded_data.get("requestId") == 6 for msg in ssem_messages)
+    assert any(msg.decoded_data.get("requestorStationId") == 2228620000 for msg in ssem_messages)
+    assert all(msg.decoded_data.get("sequenceNumber") is not None for msg in ssem_messages)
+    assert all(msg.decoded_data.get("requestState") == "granted" for msg in ssem_messages)
+
+
 def test_parse_rsu_rxa_preserves_denm_null_island_when_lpv_is_not_trusted() -> None:
     session = parse_pcap(
         str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap")

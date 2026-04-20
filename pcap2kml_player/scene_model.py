@@ -83,6 +83,7 @@ class IntersectionState:
     last_map_time: Optional[datetime] = None
     last_spat_time: Optional[datetime] = None
     map_reference_point: Optional[tuple[float, float]] = None
+    lane_stopline_points: dict[int, tuple[float, float]] = field(default_factory=dict)
     clock_skew_seconds: Optional[float] = None
     signal_groups: dict[int, SignalGroupState] = field(default_factory=dict)
 
@@ -270,6 +271,7 @@ def build_scene_snapshot(
                 state.map_revision = _coerce_int(intersection.get("revision"))
                 state.last_map_time = msg.timestamp
                 state.map_reference_point = _extract_map_reference_point(intersection)
+                state.lane_stopline_points = _extract_lane_stopline_points(intersection)
         elif msg.msg_type == MessageType.SPATEM:
             raw_intersections = _iter_spat_intersections(msg)
             if not raw_intersections:
@@ -702,6 +704,66 @@ def _extract_map_reference_point(intersection: dict) -> Optional[tuple[float, fl
     return None
 
 
+def _extract_lane_stopline_points(intersection: dict) -> dict[int, tuple[float, float]]:
+    """Extract representative stopline points per MAP lane."""
+    result: dict[int, tuple[float, float]] = {}
+    lane_set = intersection.get("laneSet")
+    if not isinstance(lane_set, list):
+        return result
+
+    for lane in lane_set:
+        if not isinstance(lane, dict):
+            continue
+        lane_id = _coerce_int(lane.get("laneId", lane.get("laneID", lane.get("id"))))
+        if lane_id is None:
+            continue
+        stopline = lane.get("stopLine", lane.get("stopline"))
+        points = _extract_point_list(stopline)
+        if points:
+            result[lane_id] = _mean_point(points)
+            continue
+        lane_points = _extract_lane_points(lane)
+        if lane_points:
+            result[lane_id] = lane_points[0]
+    return result
+
+
+def _extract_point_list(value: object) -> list[tuple[float, float]]:
+    """Normalize a list/dict point container into decimal coordinates."""
+    if isinstance(value, dict):
+        raw_points = value.get("points", value.get("nodes", value.get("nodeSetXY")))
+    else:
+        raw_points = value
+    if not isinstance(raw_points, list):
+        return []
+    points: list[tuple[float, float]] = []
+    for raw_point in raw_points:
+        if not isinstance(raw_point, dict):
+            continue
+        point = _coerce_lat_lon(raw_point)
+        if point is None:
+            point = _coerce_lat_lon(raw_point.get("delta"))
+        if point is not None:
+            points.append(point)
+    return points
+
+
+def _extract_lane_points(lane: dict) -> list[tuple[float, float]]:
+    """Extract lane centerline points used as a stopline fallback."""
+    node_list = lane.get("nodeList", lane.get("node-list"))
+    if isinstance(node_list, dict):
+        return _extract_point_list(node_list.get("nodes", node_list.get("nodeSetXY")))
+    return _extract_point_list(node_list)
+
+
+def _mean_point(points: list[tuple[float, float]]) -> tuple[float, float]:
+    """Return the centroid of a small stopline point list."""
+    return (
+        sum(point[0] for point in points) / len(points),
+        sum(point[1] for point in points) / len(points),
+    )
+
+
 def _ensure_intersection_id(
     intersections: dict[int, IntersectionState],
     intersection: dict,
@@ -742,13 +804,21 @@ def _verify_eta_against_cam(
     intersection: Optional[IntersectionState],
     cam_history: list[V2xMessage],
 ) -> Optional[EtaVerification]:
-    """Compare the requested ETA with the first CAM arrival at the intersection."""
-    if request.eta is None or intersection is None or intersection.map_reference_point is None:
+    """Compare the requested ETA with the first CAM arrival at the lane stopline."""
+    if request.eta is None or intersection is None:
         return None
     if not cam_history:
         return None
 
-    target_lat, target_lon = intersection.map_reference_point
+    target_point = None
+    if request.in_lane is not None:
+        target_point = intersection.lane_stopline_points.get(request.in_lane)
+    if target_point is None:
+        target_point = intersection.map_reference_point
+    if target_point is None:
+        return None
+
+    target_lat, target_lon = target_point
     arrival: Optional[datetime] = None
     for cam_msg in cam_history:
         if cam_msg.timestamp < request.requested_at:
@@ -831,6 +901,8 @@ def _coerce_int(value: object) -> Optional[int]:
             coerced = _coerce_int(value.get(key))
             if coerced is not None:
                 return coerced
+    if isinstance(value, tuple) and len(value) == 2:
+        return _coerce_int(value[1])
     return None
 
 

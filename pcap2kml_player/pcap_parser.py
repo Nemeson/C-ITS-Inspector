@@ -377,7 +377,14 @@ def _coerce_int(value: object) -> Optional[int]:
             coerced = _coerce_int(value.get(key))
             if coerced is not None:
                 return coerced
+    if isinstance(value, tuple) and len(value) == 2:
+        return _coerce_int(value[1])
     return None
+
+
+def _coerce_lane_id(value: object) -> Optional[int]:
+    """Normalize lane/approach choice structures to their numeric id."""
+    return _coerce_int(value)
 
 
 def _normalize_geo_point(point: object) -> Optional[dict[str, float]]:
@@ -746,27 +753,52 @@ def _extra_fields_srem(decoded: dict) -> dict:
     fields: dict = {}
     if not isinstance(body, dict):
         return fields
+    sequence_number = _coerce_int(body.get("sequenceNumber"))
+    if sequence_number is not None:
+        fields["sequenceNumber"] = sequence_number
+    timestamp = _coerce_int(body.get("timeStamp"))
+    if timestamp is not None:
+        fields["timeStamp"] = timestamp
+    second = _coerce_int(body.get("second"))
+    if second is not None:
+        fields["second"] = second
     requests = body.get("requests", [])
     if requests and isinstance(requests[0], dict):
         req = requests[0].get("request", requests[0])
-        fields["requestId"] = req.get("requestID") if isinstance(req, dict) else None
-        fields["sequenceNumber"] = req.get("sequenceNumber") if isinstance(req, dict) else None
-        in_bound = _safe_get(req, "inBoundLane", "lane")
-        if in_bound:
-            fields["inLane"] = in_bound
-        out_bound = _safe_get(req, "outBoundLane", "lane")
-        if out_bound:
-            fields["outLane"] = out_bound
+        if isinstance(req, dict):
+            fields["requestId"] = _coerce_int(req.get("requestID"))
+            if fields.get("sequenceNumber") is None:
+                request_sequence_number = _coerce_int(req.get("sequenceNumber"))
+                if request_sequence_number is not None:
+                    fields["sequenceNumber"] = request_sequence_number
+        in_bound = req.get("inBoundLane") if isinstance(req, dict) else None
+        in_lane = _coerce_lane_id(in_bound)
+        if in_lane is not None:
+            fields["inLane"] = in_lane
+            fields["inLaneRef"] = str(in_bound)
+        out_bound = req.get("outBoundLane") if isinstance(req, dict) else None
+        out_lane = _coerce_lane_id(out_bound)
+        if out_lane is not None:
+            fields["outLane"] = out_lane
+            fields["outLaneRef"] = str(out_bound)
         eta = _safe_get(req, "expectedTimeOfArrival")
         if eta:
             fields["eta"] = eta
-        intersection_id = _safe_get(req, "intersectionID", "id")
+        intersection_id = _coerce_int(req.get("intersectionID")) if isinstance(req, dict) else None
+        if intersection_id is None and isinstance(req, dict):
+            intersection_id = _coerce_int(req.get("id"))
         if intersection_id is not None:
             fields["intersectionId"] = intersection_id
     requestor = body.get("requestor")
     if isinstance(requestor, dict):
         fields["requestorType"] = _safe_get(requestor, "type", "role")
         fields["importanceLevel"] = _safe_get(requestor, "type", "importanceLevel")
+        requestor_id = _coerce_int(requestor.get("id"))
+        if requestor_id is not None:
+            fields["requestorStationId"] = requestor_id
+        schedule = _coerce_int(requestor.get("transitSchedule"))
+        if schedule is not None:
+            fields["transitSchedule"] = schedule
     return {k: v for k, v in fields.items() if v is not None}
 
 
@@ -786,8 +818,18 @@ def _extra_fields_ssem(decoded: dict) -> dict:
         sigs = first.get("sigStatus", []) if isinstance(first, dict) else []
         if sigs and isinstance(sigs[0], dict):
             req = sigs[0].get("sigStatusPackage", sigs[0])
-            fields["requestId"] = _safe_get(req, "requester", "id")
-            fields["sequenceNumber"] = _safe_get(req, "requester", "sequenceNumber")
+            fields["requestId"] = _coerce_int(_safe_get(req, "requester", "request"))
+            requestor_station_id = _coerce_int(_safe_get(req, "requester", "id"))
+            if fields["requestId"] is None:
+                fields["requestId"] = requestor_station_id
+            else:
+                fields["requestorStationId"] = requestor_station_id
+            fields["sequenceNumber"] = _coerce_int(_safe_get(req, "requester", "sequenceNumber"))
+            inbound_on = req.get("inboundOn") if isinstance(req, dict) else None
+            inbound_lane = _coerce_lane_id(inbound_on)
+            if inbound_lane is not None:
+                fields["inLane"] = inbound_lane
+                fields["inLaneRef"] = str(inbound_on)
             fields["requestState"] = req.get("status") if isinstance(req, dict) else None
     return {k: v for k, v in fields.items() if v is not None}
 

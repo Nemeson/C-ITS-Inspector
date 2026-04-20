@@ -467,17 +467,21 @@ def test_infrastructure_overlays_for_messages_create_request_overlays_for_lane_a
 
 
 def test_leaflet_html_exposes_layer_toggles_and_label_renderer():
-    assert "MAP-Infrastruktur" in LEAFLET_HTML
+    assert "MAP-Punkte" in LEAFLET_HTML
     assert "Inbound-Lanes" in LEAFLET_HTML
     assert "Outbound-Lanes" in LEAFLET_HTML
     assert "Connections" in LEAFLET_HTML
     assert "Requests" in LEAFLET_HTML
     assert "Stoplines" in LEAFLET_HTML
-    assert "SPAT-Status" in LEAFLET_HTML
+    assert "SPAT-Punkte" in LEAFLET_HTML
     assert "addInfrastructureLabel" in LEAFLET_HTML
     assert "qrc:///qtwebchannel/qwebchannel.js" in LEAFLET_HTML
     assert "typeof QWebChannel !== 'undefined'" in LEAFLET_HTML
     assert "map.invalidateSize(false)" in LEAFLET_HTML
+    assert "map: L.layerGroup()," in LEAFLET_HTML
+    assert "spat: L.layerGroup()" in LEAFLET_HTML
+    assert "map: L.layerGroup().addTo(map)" not in LEAFLET_HTML
+    assert "spat: L.layerGroup().addTo(map)" not in LEAFLET_HTML
 
 
 class _FakePage:
@@ -525,7 +529,25 @@ def test_load_messages_handles_label_overlays_without_popup(monkeypatch):
         msg_type=MessageType.MAPEM,
         latitude=52.0,
         longitude=13.0,
-        decoded_data={},
+        decoded_data={
+            "intersections": [
+                {
+                    "refPoint": {"lat": 52.0, "lon": 13.0},
+                    "laneSet": [
+                        {
+                            "laneID": 17,
+                            "laneRole": "inbound",
+                            "nodeList": {
+                                "nodes": [
+                                    {"lat": 52.0, "lon": 13.0},
+                                    {"lat": 52.0001, "lon": 13.0002},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
     )
 
     widget.load_messages([map_msg])
@@ -568,7 +590,36 @@ def test_load_messages_does_not_render_markers_for_map_or_spat(monkeypatch):
     widget.load_messages([map_msg, spat_msg])
 
     assert not any("addMarker(" in script for script in captured_scripts)
-    assert any("addInfrastructureCircle(" in script for script in captured_scripts)
+    assert not any("addInfrastructureCircle(" in script for script in captured_scripts)
+    assert not any("addInfrastructureLabel(" in script for script in captured_scripts)
+
+
+def test_load_messages_does_not_render_station_marker_for_ssem(monkeypatch):
+    captured_scripts = []
+
+    def fake_run_js(self, script):
+        captured_scripts.append(script)
+
+    monkeypatch.setattr(MapWidget, "_run_js", fake_run_js)
+    monkeypatch.setattr(MapWidget, "__init__", lambda self, parent=None: None)
+
+    widget = MapWidget()
+    widget._station_color_map = {}
+    widget._station_index = 0
+
+    ssem_msg = V2xMessage(
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        station_id="rsu-ssem",
+        msg_type=MessageType.SSEM,
+        latitude=52.0,
+        longitude=13.0,
+        decoded_data={},
+    )
+
+    widget.load_messages([ssem_msg])
+
+    assert not any("addMarker(" in script for script in captured_scripts)
+    assert not any("addTrajectory(" in script for script in captured_scripts)
 
 
 def test_render_playback_slice_uses_only_messages_up_to_current_index(monkeypatch):
