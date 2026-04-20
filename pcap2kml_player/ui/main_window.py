@@ -88,6 +88,9 @@ class MainWindow(QMainWindow):
         self._loader_worker: Optional[ParsingWorker] = None
         self._message_row_lookup: dict[tuple[str, str], int] = {}
         self._last_highlighted_row: Optional[int] = None
+        self._last_detail_key: Optional[tuple[str, str]] = None
+        self._pending_detail_message: Optional[V2xMessage] = None
+        self._message_table_maximized = False
 
         self._setup_ui()
         self._setup_player()
@@ -259,6 +262,26 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(8)
+        header_label = QLabel("Nachrichten")
+        header_label.setStyleSheet("font-weight: 700; color: #10233f;")
+        self._btn_toggle_message_table = QPushButton("Tabelle maximieren")
+        self._btn_toggle_message_table.setCheckable(True)
+        self._btn_toggle_message_table.setToolTip(
+            "Die Nachrichtentabelle auf kleinen Bildschirmen voruebergehend vergroessern"
+        )
+        header_row.addWidget(header_label)
+        header_row.addStretch()
+        header_row.addWidget(self._btn_toggle_message_table)
+        layout.addLayout(header_row)
+
+        table_container = QWidget()
+        table_layout = QVBoxLayout(table_container)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(0)
+
         self._msg_table = QTableWidget(0, NUM_COLUMNS)
         self._msg_table.setHorizontalHeaderLabels(TABLE_HEADERS)
         self._msg_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -266,7 +289,7 @@ class MainWindow(QMainWindow):
         self._msg_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._msg_table.setAlternatingRowColors(True)
         self._msg_table.verticalHeader().setVisible(False)
-        layout.addWidget(self._msg_table, stretch=3)
+        table_layout.addWidget(self._msg_table)
 
         self._context_tabs = QTabWidget()
         self._context_tabs.setDocumentMode(True)
@@ -309,7 +332,14 @@ class MainWindow(QMainWindow):
         self._setup_scene_panel(scene_layout)
         self._context_tabs.addTab(scene_tab, "Szene")
 
-        layout.addWidget(self._context_tabs, stretch=2)
+        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._right_splitter.addWidget(table_container)
+        self._right_splitter.addWidget(self._context_tabs)
+        self._right_splitter.setChildrenCollapsible(False)
+        self._right_splitter.setStretchFactor(0, 3)
+        self._right_splitter.setStretchFactor(1, 2)
+        self._right_splitter.setSizes([460, 280])
+        layout.addWidget(self._right_splitter, stretch=1)
 
         return panel
 
@@ -448,6 +478,8 @@ class MainWindow(QMainWindow):
         self._slider.sliderMoved.connect(self._on_slider_moved)
         self._station_list.itemSelectionChanged.connect(self._on_station_filter_changed)
         self._msg_table.cellClicked.connect(self._on_table_row_clicked)
+        self._btn_toggle_message_table.toggled.connect(self._toggle_message_table_maximized)
+        self._context_tabs.currentChanged.connect(self._on_context_tab_changed)
 
         self._player.tick.connect(self._on_playback_tick)
         self._player.state_changed.connect(self._on_player_state_changed)
@@ -693,6 +725,8 @@ class MainWindow(QMainWindow):
 
         self._message_row_lookup = {}
         self._last_highlighted_row = None
+        self._last_detail_key = None
+        self._pending_detail_message = None
         self._msg_table.setRowCount(len(messages))
         for row, msg in enumerate(messages):
             timestamp_text = msg.timestamp.strftime("%H:%M:%S.%f")[:-3]
@@ -725,7 +759,7 @@ class MainWindow(QMainWindow):
         self._map_widget.render_playback_slice(self._player._messages, self._player.current_index)
         self._map_widget.update_playback_position(msg)
         self._highlight_table_row(msg)
-        self._show_security_detail(msg)
+        self._show_security_detail(msg, auto_focus=False)
         self._update_scene_for_message(msg)
 
     def _highlight_table_row(self, msg: V2xMessage) -> None:
@@ -778,6 +812,31 @@ class MainWindow(QMainWindow):
             f"{self._player.format_time(seconds)} / {self._player.format_time(total_time)}"
         )
 
+    def _on_context_tab_changed(self, index: int) -> None:
+        """Refresh the detail table only when the user opens the details tab."""
+        if index != 0 or self._pending_detail_message is None:
+            return
+        self._show_security_detail(
+            self._pending_detail_message,
+            auto_focus=False,
+            force_refresh=True,
+        )
+
+    def _toggle_message_table_maximized(self, maximized: bool) -> None:
+        """Expand the message table by collapsing the lower context tabs."""
+        self._message_table_maximized = maximized
+        self._context_tabs.setVisible(not maximized)
+        if hasattr(self, "_right_splitter"):
+            if maximized:
+                self._right_splitter.setSizes([1, 0])
+            else:
+                self._right_splitter.setSizes([460, 280])
+        self._btn_toggle_message_table.setText(
+            "Tabellenbereich wiederherstellen"
+            if maximized
+            else "Tabelle maximieren"
+        )
+
     def _on_speed_changed(self, index: int) -> None:
         """Handle speed selector changes."""
         if 0 <= index < len(SPEED_OPTIONS):
@@ -802,11 +861,24 @@ class MainWindow(QMainWindow):
                 and msg.station_id == target_station
             ):
                 self._player.seek_to_index(index)
-                self._show_security_detail(msg)
+                self._show_security_detail(msg, auto_focus=True, force_refresh=True)
                 return
 
-    def _show_security_detail(self, msg: V2xMessage) -> None:
+    def _show_security_detail(
+        self,
+        msg: V2xMessage,
+        *,
+        auto_focus: bool,
+        force_refresh: bool = False,
+    ) -> None:
         """Render message and PKI details for the selected message."""
+        self._pending_detail_message = msg
+        detail_key = self._message_lookup_key(msg)
+        if not auto_focus and self._context_tabs.currentIndex() != 0:
+            return
+        if not force_refresh and detail_key == self._last_detail_key:
+            return
+
         rows = list(msg.to_detail_rows())
         if msg.security_info is None:
             rows.append(
@@ -819,7 +891,9 @@ class MainWindow(QMainWindow):
             self._detail_table.setItem(index, 0, QTableWidgetItem(field))
             self._detail_table.setItem(index, 1, QTableWidgetItem(value))
         self._detail_table.show()
-        self._context_tabs.setCurrentIndex(0)
+        self._last_detail_key = detail_key
+        if auto_focus:
+            self._context_tabs.setCurrentIndex(0)
 
     def _update_scene_for_message(self, msg: Optional[V2xMessage]) -> None:
         """Rebuild and display the current scene snapshot for one playback position."""
@@ -1192,10 +1266,21 @@ class MainWindow(QMainWindow):
         self._msg_table.setRowCount(0)
         self._message_row_lookup = {}
         self._last_highlighted_row = None
+        self._last_detail_key = None
+        self._pending_detail_message = None
         self._detail_table.hide()
         self._clear_scene_panel()
         if hasattr(self, "_context_tabs"):
             self._context_tabs.setCurrentIndex(1)
+            self._context_tabs.setVisible(True)
+        if hasattr(self, "_btn_toggle_message_table"):
+            self._btn_toggle_message_table.blockSignals(True)
+            self._btn_toggle_message_table.setChecked(False)
+            self._btn_toggle_message_table.setText("Tabelle maximieren")
+            self._btn_toggle_message_table.blockSignals(False)
+        if hasattr(self, "_right_splitter"):
+            self._right_splitter.setSizes([460, 280])
+        self._message_table_maximized = False
         self._player.set_filtered_messages([])
         self._all_station_ids.clear()
         self._active_stations.clear()
@@ -1222,11 +1307,16 @@ class MainWindow(QMainWindow):
         splitter_state = self._settings.value("window/splitter")
         if splitter_state is not None:
             self._splitter.restoreState(splitter_state)
+        right_splitter_state = self._settings.value("window/right_splitter")
+        if right_splitter_state is not None and hasattr(self, "_right_splitter"):
+            self._right_splitter.restoreState(right_splitter_state)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Persist window state and app memory on close."""
         self._settings.setValue("window/geometry", self.saveGeometry())
         self._settings.setValue("window/splitter", self._splitter.saveState())
+        if hasattr(self, "_right_splitter"):
+            self._settings.setValue("window/right_splitter", self._right_splitter.saveState())
         self._memory.save()
         super().closeEvent(event)
 
