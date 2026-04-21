@@ -57,6 +57,8 @@ Die Kartenlogik ist inzwischen deutlich ueber Marker und einfache Trajektorien h
 - SRM/SSEM werden als Priorisierungs-Overlays auf Inbound-Lane, Outbound-Lane und Connection dargestellt
 - Dominante und sekundaere Priorisierungen werden unterschiedlich stark visualisiert
 - Mehrere Requests auf derselben Connection werden seitlich entzerrt
+- Karten-Updates werden gebuendelt an QtWebEngine uebergeben und Leaflet rendert Linien per Canvas,
+  damit grosse TXA/RXA-Merges beim Laden nicht durch viele einzelne JavaScript-Aufrufe einfrieren
 - MAP-/SPAT-Punktlayer sind standardmaessig deaktiviert
 - SSEM/SSM erzeugt keine Punktmarker oder Trajektorien
 - Connections zeigen per Mouseover den aktiven MovementState und Timing-Felder

@@ -1,5 +1,6 @@
 """Tests for JavaScript escaping helpers in the map widget."""
 
+import json
 from datetime import datetime, timezone
 
 from pcap2kml_player.data_model import MessageType, V2xMessage
@@ -515,6 +516,11 @@ class _FakePage:
         self.scripts.append(script)
 
 
+def _render_payload(captured_scripts: list[str]) -> dict:
+    script = next(script for script in captured_scripts if script.startswith("applyRenderPayload("))
+    return json.loads(script.removeprefix("applyRenderPayload(").removesuffix(")"))
+
+
 def test_run_js_queues_until_map_page_is_loaded():
     widget = MapWidget.__new__(MapWidget)
     fake_page = _FakePage()
@@ -575,9 +581,10 @@ def test_load_messages_handles_label_overlays_without_popup(monkeypatch):
 
     widget.load_messages([map_msg])
 
-    assert any("addInfrastructureLabel(" in script for script in captured_scripts)
-    assert not any("addMarker(" in script for script in captured_scripts)
-    assert not any("addTrajectory(" in script for script in captured_scripts)
+    payload = _render_payload(captured_scripts)
+    assert any(item["kind"] == "label" for item in payload["infrastructure"])
+    assert payload["markers"] == []
+    assert payload["trajectories"] == []
 
 
 def test_load_messages_does_not_render_markers_for_map_or_spat(monkeypatch):
@@ -612,9 +619,9 @@ def test_load_messages_does_not_render_markers_for_map_or_spat(monkeypatch):
 
     widget.load_messages([map_msg, spat_msg])
 
-    assert not any("addMarker(" in script for script in captured_scripts)
-    assert not any("addInfrastructureCircle(" in script for script in captured_scripts)
-    assert not any("addInfrastructureLabel(" in script for script in captured_scripts)
+    payload = _render_payload(captured_scripts)
+    assert payload["markers"] == []
+    assert payload["infrastructure"] == []
 
 
 def test_load_messages_does_not_render_station_marker_for_ssem(monkeypatch):
@@ -641,8 +648,9 @@ def test_load_messages_does_not_render_station_marker_for_ssem(monkeypatch):
 
     widget.load_messages([ssem_msg])
 
-    assert not any("addMarker(" in script for script in captured_scripts)
-    assert not any("addTrajectory(" in script for script in captured_scripts)
+    payload = _render_payload(captured_scripts)
+    assert payload["markers"] == []
+    assert payload["trajectories"] == []
 
 
 def test_render_playback_slice_uses_only_messages_up_to_current_index(monkeypatch):
@@ -675,18 +683,14 @@ def test_render_playback_slice_uses_only_messages_up_to_current_index(monkeypatc
 
     widget.render_playback_slice([cam1, cam2], 0)
 
-    marker_scripts = [script for script in captured_scripts if "addMarker(" in script]
-    trajectory_scripts = [script for script in captured_scripts if "addTrajectory(" in script]
+    payload = _render_payload(captured_scripts)
 
-    assert marker_scripts
-    assert "52.0, 13.0" in marker_scripts[-1]
-    assert not any("52.1, 13.1" in script for script in marker_scripts)
-    assert trajectory_scripts
-    assert "52.1" not in trajectory_scripts[-1]
-    assert not any(script == "clearAll()" for script in captured_scripts)
-    assert any("syncMarkers(" in script for script in captured_scripts)
-    assert any("syncTrajectories(" in script for script in captured_scripts)
-    assert any("syncInfrastructure(" in script for script in captured_scripts)
+    assert payload["markers"]
+    assert payload["markers"][-1]["lat"] == 52.0
+    assert payload["markers"][-1]["lon"] == 13.0
+    assert payload["trajectories"]
+    assert [52.1, 13.1] not in payload["trajectories"][-1]["coords"]
+    assert payload["clear"] is False
 
 
 def test_render_playback_slice_limits_trail_to_recent_points(monkeypatch):
@@ -716,9 +720,10 @@ def test_render_playback_slice_limits_trail_to_recent_points(monkeypatch):
 
     widget.render_playback_slice(messages, 9)
 
-    trajectory_script = next(script for script in captured_scripts if "addTrajectory(" in script)
-    assert "52.0, 13.0" not in trajectory_script
-    assert "52.009" in trajectory_script
+    payload = _render_payload(captured_scripts)
+    coords = payload["trajectories"][-1]["coords"]
+    assert [52.0, 13.0] not in coords
+    assert [52.009, 13.009] in coords
 
 
 def test_update_playback_position_follows_selected_station(monkeypatch):
@@ -772,7 +777,7 @@ def test_load_messages_clears_before_full_reload(monkeypatch):
 
     widget.load_messages([cam_msg])
 
-    assert captured_scripts[0] == "clearAll()"
+    assert _render_payload(captured_scripts)["clear"] is True
 
 
 def test_load_messages_skips_null_island_markers(monkeypatch):
@@ -805,10 +810,10 @@ def test_load_messages_skips_null_island_markers(monkeypatch):
 
     widget.load_messages([null_msg, good_msg])
 
-    marker_scripts = [script for script in captured_scripts if "addMarker(" in script]
-    assert marker_scripts
-    assert not any("bad-denm" in script for script in marker_scripts)
-    assert any("good-cam" in script for script in marker_scripts)
+    payload = _render_payload(captured_scripts)
+    station_ids = {marker["stationId"] for marker in payload["markers"]}
+    assert "bad-denm" not in station_ids
+    assert "good-cam" in station_ids
 
 
 def test_load_messages_skips_far_outliers_when_infrastructure_anchor_exists(monkeypatch):
@@ -853,12 +858,15 @@ def test_load_messages_skips_far_outliers_when_infrastructure_anchor_exists(monk
 
     widget.load_messages([map_msg, outlier_msg, local_msg])
 
-    marker_scripts = [script for script in captured_scripts if "addMarker(" in script]
-    assert not any("bad-denm" in script for script in marker_scripts)
-    assert any("local-cam" in script for script in marker_scripts)
+    payload = _render_payload(captured_scripts)
+    station_ids = {marker["stationId"] for marker in payload["markers"]}
+    assert "bad-denm" not in station_ids
+    assert "local-cam" in station_ids
 
 
 def test_leaflet_html_exposes_incremental_sync_helpers():
+    assert "L.map('map', {preferCanvas: true})" in LEAFLET_HTML
+    assert "applyRenderPayload(payload)" in LEAFLET_HTML
     assert "syncMarkers(activeIds)" in LEAFLET_HTML
     assert "syncTrajectories(activeIds)" in LEAFLET_HTML
     assert "syncInfrastructure(activeIds)" in LEAFLET_HTML

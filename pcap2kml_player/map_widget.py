@@ -964,7 +964,7 @@ LEAFLET_HTML = """<!DOCTYPE html>
 <body>
     <div id="map"></div>
     <script>
-        var map = L.map('map').setView([48.0, 11.0], 13);
+        var map = L.map('map', {preferCanvas: true}).setView([48.0, 11.0], 13);
         map.whenReady(function() {
             map.invalidateSize(false);
         });
@@ -1248,6 +1248,69 @@ LEAFLET_HTML = """<!DOCTYPE html>
             }
         }
 
+        function applyRenderPayload(payload) {
+            if (payload.clear) {
+                clearAll();
+            }
+            setStationColors(payload.stationColors || {});
+
+            var markersPayload = payload.markers || [];
+            var activeMarkerIds = [];
+            for (var markerIndex = 0; markerIndex < markersPayload.length; markerIndex++) {
+                var marker = markersPayload[markerIndex];
+                activeMarkerIds.push(marker.id);
+                addMarker(
+                    marker.id,
+                    marker.stationId,
+                    marker.lat,
+                    marker.lon,
+                    marker.popup,
+                    marker.color,
+                    marker.layerName || 'markers'
+                );
+            }
+
+            var infrastructurePayload = payload.infrastructure || [];
+            var activeInfrastructureIds = [];
+            for (var infraIndex = 0; infraIndex < infrastructurePayload.length; infraIndex++) {
+                var item = infrastructurePayload[infraIndex];
+                activeInfrastructureIds.push(item.id);
+                if (item.kind === 'circle') {
+                    addInfrastructureCircle(
+                        item.id, item.lat, item.lon, item.radius, item.color,
+                        item.popup || '', item.layerName || 'map'
+                    );
+                } else if (item.kind === 'polyline') {
+                    addInfrastructurePolyline(
+                        item.id, item.coords || [], item.color, item.popup || '',
+                        item.layerName || 'map', item.weight || 3, item.opacity || 0.85,
+                        item.dashArray || '8 6', item.tooltip || ''
+                    );
+                } else if (item.kind === 'label') {
+                    addInfrastructureLabel(
+                        item.id, item.lat, item.lon, item.text || '', item.color,
+                        item.layerName || 'map'
+                    );
+                }
+            }
+
+            var trajectoriesPayload = payload.trajectories || [];
+            var activeTrajectoryIds = [];
+            for (var trajectoryIndex = 0; trajectoryIndex < trajectoriesPayload.length; trajectoryIndex++) {
+                var trajectory = trajectoriesPayload[trajectoryIndex];
+                activeTrajectoryIds.push(trajectory.stationId);
+                addTrajectory(trajectory.stationId, trajectory.coords || [], trajectory.color);
+            }
+
+            syncMarkers(activeMarkerIds);
+            syncTrajectories(activeTrajectoryIds);
+            syncInfrastructure(activeInfrastructureIds);
+
+            if (payload.fitView) {
+                fitToMarkers();
+            }
+        }
+
         // Called from Python to highlight the current playback marker
         function highlightMarker(id) {
             for (var key in markers) {
@@ -1442,14 +1505,10 @@ class MapWidget(QWebEngineView):
         clear_first: bool,
     ) -> None:
         """Internal renderer for a full load or a playback time slice."""
-        if clear_first:
-            self._run_js("clearAll()")
-
         # Assign colors and set them in JS
         # Group by station for trajectories
         station_coords: dict[str, list] = {}
-        active_marker_ids: list[str] = []
-        active_trajectory_ids: list[str] = []
+        markers_by_id: dict[str, dict[str, object]] = {}
         display_anchors = _display_anchor_points(messages)
 
         for msg in messages:
@@ -1467,15 +1526,15 @@ class MapWidget(QWebEngineView):
             if msg.msg_type not in NON_STATION_MARKER_TYPES:
                 # Place/update the current dynamic marker at the latest visible position.
                 marker_id_raw = _marker_id_for_message(msg)
-                marker_id = _js_escape(marker_id_raw)
-                station_id_js = _js_escape(msg.station_id)
-                popup_js = _js_escape(popup)
-                color_js = _js_escape(color)
-                active_marker_ids.append(marker_id_raw)
-                self._run_js(
-                    f"addMarker('{marker_id}', '{station_id_js}', {marker_lat}, {marker_lon}, "
-                    f"'{popup_js}', '{color_js}', 'markers')"
-                )
+                markers_by_id[marker_id_raw] = {
+                    "id": marker_id_raw,
+                    "stationId": msg.station_id,
+                    "lat": marker_lat,
+                    "lon": marker_lon,
+                    "popup": popup,
+                    "color": color,
+                    "layerName": "markers",
+                }
 
             # Collect trajectory coordinates
             if msg.msg_type not in NON_STATION_MARKER_TYPES:
@@ -1483,61 +1542,66 @@ class MapWidget(QWebEngineView):
                     [msg.latitude, msg.longitude]
                 )
 
-        colors_js = json.dumps(self._station_color_map)
-        self._run_js(f"setStationColors({colors_js})")
-
-        active_infrastructure_ids: list[str] = []
+        infrastructure_payload: list[dict[str, object]] = []
         for overlay in _infrastructure_overlays_for_messages(messages):
-            active_infrastructure_ids.append(str(overlay["id"]))
-            overlay_id = _js_escape(str(overlay["id"]))
-            overlay_color = _js_escape(str(overlay["color"]))
+            overlay_id = str(overlay["id"])
+            layer_name = str(overlay["layer"])
+            overlay_color = str(overlay["color"])
             if overlay["kind"] == "circle":
-                overlay_popup = _js_escape(str(overlay.get("popup", "")))
-                self._run_js(
-                    "addInfrastructureCircle("
-                    f"'{overlay_id}', {overlay['lat']}, {overlay['lon']}, {overlay['radius']}, "
-                    f"'{overlay_color}', '{overlay_popup}', '{_js_escape(str(overlay['layer']))}')"
-                )
+                infrastructure_payload.append({
+                    "kind": "circle",
+                    "id": overlay_id,
+                    "lat": overlay["lat"],
+                    "lon": overlay["lon"],
+                    "radius": overlay["radius"],
+                    "color": overlay_color,
+                    "popup": str(overlay.get("popup", "")),
+                    "layerName": layer_name,
+                })
             elif overlay["kind"] == "polyline":
-                overlay_popup = _js_escape(str(overlay.get("popup", "")))
-                coords_js = json.dumps(overlay["coords"])
-                overlay_weight = overlay.get("weight", 3)
-                overlay_opacity = overlay.get("opacity", 0.85)
-                overlay_dash = _js_escape(str(overlay.get("dashArray", "8 6")))
-                overlay_tooltip = _js_escape(str(overlay.get("tooltip", "")))
-                self._run_js(
-                    "addInfrastructurePolyline("
-                    f"'{overlay_id}', {coords_js}, '{overlay_color}', '{overlay_popup}', "
-                    f"'{_js_escape(str(overlay['layer']))}', {overlay_weight}, {overlay_opacity}, "
-                    f"'{overlay_dash}', '{overlay_tooltip}')"
-                )
+                infrastructure_payload.append({
+                    "kind": "polyline",
+                    "id": overlay_id,
+                    "coords": overlay["coords"],
+                    "color": overlay_color,
+                    "popup": str(overlay.get("popup", "")),
+                    "layerName": layer_name,
+                    "weight": overlay.get("weight", 3),
+                    "opacity": overlay.get("opacity", 0.85),
+                    "dashArray": str(overlay.get("dashArray", "8 6")),
+                    "tooltip": str(overlay.get("tooltip", "")),
+                })
             elif overlay["kind"] == "label":
-                self._run_js(
-                    "addInfrastructureLabel("
-                    f"'{overlay_id}', {overlay['lat']}, {overlay['lon']}, "
-                    f"'{_js_escape(str(overlay['text']))}', '{overlay_color}', "
-                    f"'{_js_escape(str(overlay['layer']))}')"
-                )
+                infrastructure_payload.append({
+                    "kind": "label",
+                    "id": overlay_id,
+                    "lat": overlay["lat"],
+                    "lon": overlay["lon"],
+                    "text": str(overlay["text"]),
+                    "color": overlay_color,
+                    "layerName": layer_name,
+                })
 
         # Draw trajectories
+        trajectories_payload: list[dict[str, object]] = []
         for station_id, coords in station_coords.items():
             if short_trails:
                 coords = coords[-PLAYBACK_TRAIL_POINTS:]
-            color = _js_escape(self._get_station_color(station_id))
-            coords_js = json.dumps(coords)
-            active_trajectory_ids.append(station_id)
-            self._run_js(f"addTrajectory('{_js_escape(station_id)}', {coords_js}, '{color}')")
+            trajectories_payload.append({
+                "stationId": station_id,
+                "coords": coords,
+                "color": self._get_station_color(station_id),
+            })
 
-        markers_js = json.dumps(active_marker_ids)
-        trajectories_js = json.dumps(active_trajectory_ids)
-        infrastructure_js = json.dumps(active_infrastructure_ids)
-        self._run_js(f"syncMarkers({markers_js})")
-        self._run_js(f"syncTrajectories({trajectories_js})")
-        self._run_js(f"syncInfrastructure({infrastructure_js})")
-
-        # Fit map to all markers
-        if fit_view:
-            self._run_js("fitToMarkers()")
+        payload = {
+            "clear": clear_first,
+            "fitView": fit_view,
+            "stationColors": self._station_color_map,
+            "markers": list(markers_by_id.values()),
+            "infrastructure": infrastructure_payload,
+            "trajectories": trajectories_payload,
+        }
+        self._run_js(f"applyRenderPayload({json.dumps(payload)})")
 
     def update_playback_position(self, msg: V2xMessage) -> None:
         """Move the marker for msg.station_id and highlight it."""
