@@ -260,3 +260,22 @@ def test_filter_prioritization_issues_by_severity_and_intersection():
     filtered = window._filter_prioritization_issues(issues)
 
     assert [issue.request_id for issue in filtered] == [1]
+
+
+def test_reset_playback_render_caches_clears_state_without_recursion():
+    window = MainWindow.__new__(MainWindow)
+    window._last_scene_update_monotonic = 1.0
+    window._last_scene_cache_key = (123, "2026-04-19T12:00:00+00:00")
+    window._last_scene_cache_snapshot = object()
+    window._last_map_slice_update_monotonic = 2.0
+    window._last_map_slice_index = 99
+    window._last_map_messages_id = 456
+
+    window._reset_playback_render_caches()
+
+    assert window._last_scene_update_monotonic == 0.0
+    assert window._last_scene_cache_key is None
+    assert window._last_scene_cache_snapshot is None
+    assert window._last_map_slice_update_monotonic == 0.0
+    assert window._last_map_slice_index is None
+    assert window._last_map_messages_id is None

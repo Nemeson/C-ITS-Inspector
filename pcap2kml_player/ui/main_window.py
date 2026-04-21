@@ -1025,7 +1025,12 @@ class MainWindow(QMainWindow):
 
     def _reset_playback_render_caches(self) -> None:
         """Reset throttling/caches after loading, filtering, or clearing a session."""
-        self._reset_playback_render_caches()
+        self._last_scene_update_monotonic = 0.0
+        self._last_scene_cache_key = None
+        self._last_scene_cache_snapshot = None
+        self._last_map_slice_update_monotonic = 0.0
+        self._last_map_slice_index = None
+        self._last_map_messages_id = None
 
     def _highlight_table_row(self, msg: V2xMessage) -> None:
         """Select the matching row and only scroll when it leaves the viewport."""
