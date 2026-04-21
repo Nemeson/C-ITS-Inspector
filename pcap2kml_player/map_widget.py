@@ -976,22 +976,76 @@ LEAFLET_HTML = """<!DOCTYPE html>
         });
 
         // Fallback tile layer (CartoDB — works reliably from embedded browsers)
-        var cartoLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        var cartoLightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
             maxZoom: 20
         });
 
-        // Try OSM first; if tiles fail to load, switch to CartoDB
-        var activeLayer = osmLayer.addTo(map);
+        var cartoDarkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+            maxZoom: 20
+        });
+
+        var satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+            maxZoom: 19
+        });
+
+        var baseLayers = {
+            'Hell / Schwarz-Weiss': cartoLightLayer,
+            'OSM Standard': osmLayer,
+            'Dunkel': cartoDarkLayer,
+            'Satellit': satelliteLayer
+        };
+
+        function readStoredBaseLayerName() {
+            try {
+                return localStorage.getItem('pcap2kml.baseLayer');
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function storeBaseLayerName(name) {
+            try {
+                localStorage.setItem('pcap2kml.baseLayer', name);
+            } catch (error) {
+                // Some QtWebEngine contexts block localStorage for about:blank pages.
+            }
+        }
+
+        // Restore the last base layer locally; default to OSM for maximum compatibility.
+        var preferredBaseLayerName = readStoredBaseLayerName() || 'OSM Standard';
+        var activeLayer = baseLayers[preferredBaseLayerName] || osmLayer;
+        activeLayer.addTo(map);
         var tileErrorCount = 0;
 
-        osmLayer.on('tileerror', function() {
-            tileErrorCount++;
-            if (tileErrorCount >= 3 && activeLayer === osmLayer) {
-                map.removeLayer(osmLayer);
-                cartoLayer.addTo(map);
-                activeLayer = cartoLayer;
+        function switchToFallbackLayer() {
+            if (activeLayer !== cartoLightLayer) {
+                map.removeLayer(activeLayer);
+                cartoLightLayer.addTo(map);
+                activeLayer = cartoLightLayer;
+                storeBaseLayerName('Hell / Schwarz-Weiss');
             }
+        }
+
+        function registerTileFallback(layer) {
+            layer.on('tileerror', function() {
+                tileErrorCount++;
+                if (tileErrorCount >= 3) {
+                    switchToFallbackLayer();
+                }
+            });
+        }
+
+        for (var baseLayerName in baseLayers) {
+            registerTileFallback(baseLayers[baseLayerName]);
+        }
+
+        map.on('baselayerchange', function(event) {
+            activeLayer = event.layer;
+            storeBaseLayerName(event.name);
+            tileErrorCount = 0;
         });
 
         var markers = {};
@@ -1008,7 +1062,7 @@ LEAFLET_HTML = """<!DOCTYPE html>
             map_requests: L.layerGroup().addTo(map),
             spat: L.layerGroup()
         };
-        var overlayControl = L.control.layers(null, {
+        var overlayControl = L.control.layers(baseLayers, {
             'Stationen': overlayGroups.markers,
             'Trajektorien': overlayGroups.trajectories,
             'MAP-Punkte': overlayGroups.map,

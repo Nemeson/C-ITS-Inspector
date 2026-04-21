@@ -475,6 +475,18 @@ def test_infrastructure_overlays_for_messages_create_request_overlays_for_lane_a
 
 
 def test_leaflet_html_exposes_layer_toggles_and_label_renderer():
+    assert "Hell / Schwarz-Weiss" in LEAFLET_HTML
+    assert "OSM Standard" in LEAFLET_HTML
+    assert "Dunkel" in LEAFLET_HTML
+    assert "Satellit" in LEAFLET_HTML
+    assert "World_Imagery" in LEAFLET_HTML
+    assert "function readStoredBaseLayerName()" in LEAFLET_HTML
+    assert "function storeBaseLayerName(name)" in LEAFLET_HTML
+    assert "readStoredBaseLayerName() || 'OSM Standard'" in LEAFLET_HTML
+    assert "var preferredBaseLayerName = localStorage.getItem" not in LEAFLET_HTML
+    assert "localStorage.setItem('pcap2kml.baseLayer', event.name)" not in LEAFLET_HTML
+    assert "});\n            }\n        });" not in LEAFLET_HTML
+    assert "L.control.layers(baseLayers" in LEAFLET_HTML
     assert "MAP-Punkte" in LEAFLET_HTML
     assert "Inbound-Lanes" in LEAFLET_HTML
     assert "Outbound-Lanes" in LEAFLET_HTML

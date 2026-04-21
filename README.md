@@ -43,6 +43,12 @@ Unterstuetzte Nachrichtentypen:
 
 Die Kartenlogik ist inzwischen deutlich ueber Marker und einfache Trajektorien hinaus erweitert:
 
+- Basiskarten sind im Leaflet-Layer-Control umschaltbar:
+  - `Hell / Schwarz-Weiss`
+  - `OSM Standard`
+  - `Dunkel`
+  - `Satellit`
+- Die zuletzt gewaehlte Basiskarte wird lokal im WebEngine-Profil gespeichert
 - MAP und SPAT werden als Infrastruktur-Layer statt als normale RSU-Marker gerendert
 - MAP-Lanes sind nach `Inbound` und `Outbound` getrennt
 - Connections werden schematisch zwischen Lanes dargestellt
@@ -325,7 +331,7 @@ statt automatisch etwas nachzuladen.
 
 Die aktuelle Testsuite deckt Parser, Kartenlogik, Playback, Export, Sicherheitsparser und Szenenmodell breit ab.
 
-- Aktueller Stand: `187 passed`
+- Aktueller Stand: `190 passed`
 - Vorhandene Testbereiche:
   - App-Memory
   - ASN.1-Schema-Update
