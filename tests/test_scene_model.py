@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pcap2kml_player.data_model import MessageType, V2xMessage
+from pcap2kml_player.data_model import CaptureRole, MessageSource, MessageType, V2xMessage
 from pcap2kml_player.pcap_parser import parse_pcap
 from pcap2kml_player.scene_model import (
     ActiveRequest,
@@ -18,8 +18,11 @@ from pcap2kml_player.scene_model import (
     SceneSnapshot,
     SignalGroupState,
     SpatForecast,
+    build_prioritization_issues,
     build_request_visuals,
     build_scene_snapshot,
+    collect_prioritization_issue_history,
+    collect_prioritization_issue_occurrences,
     find_overdue_requests,
     get_request_operational_status,
     get_clock_skew_warnings,
@@ -121,7 +124,7 @@ def test_build_request_visuals_marks_dominant_and_secondary_requests(now):
     assert visuals[42][1].is_dominant is False
 
 
-def test_build_request_visuals_marks_overdue_request_as_timeout(now):
+def test_build_request_visuals_hides_overdue_request_from_map_visuals(now):
     overdue = ActiveRequest(
         request_id=12,
         sequence_number=1,
@@ -137,7 +140,108 @@ def test_build_request_visuals_marks_overdue_request_as_timeout(now):
 
     visuals = build_request_visuals(scene)
 
-    assert visuals[42][0].status == RequestOperationalStatus.TIMEOUT
+    assert visuals == {}
+
+
+def test_build_prioritization_issues_lists_overdue_request_as_timeout(now):
+    overdue = ActiveRequest(
+        request_id=12,
+        sequence_number=1,
+        intersection_id=42,
+        station_id="bus-1",
+        importance_level=2,
+        requested_at=now - timedelta(seconds=2),
+        in_lane=1,
+        out_lane=3,
+    )
+    scene = SceneSnapshot(
+        timeline_position=now,
+        request_states=[overdue],
+    )
+
+    issues = build_prioritization_issues(scene)
+
+    assert len(issues) == 1
+    assert issues[0].issue_type == "TIMEOUT"
+    assert issues[0].severity == "error"
+    assert issues[0].intersection_id == 42
+    assert issues[0].request_id == 12
+
+
+def test_collect_prioritization_issue_history_keeps_first_issue_occurrence(now):
+    srem = V2xMessage(
+        timestamp=now,
+        station_id="bus-1",
+        msg_type=MessageType.SREM,
+        latitude=52.0,
+        longitude=13.0,
+        decoded_data={
+            "intersectionId": 42,
+            "requestId": 12,
+            "sequenceNumber": 1,
+            "inLane": 1,
+            "outLane": 3,
+        },
+    )
+    cam_after_timeout = V2xMessage(
+        timestamp=now + timedelta(seconds=2),
+        station_id="bus-1",
+        msg_type=MessageType.CAM,
+        latitude=52.0,
+        longitude=13.0,
+    )
+    later_cam = V2xMessage(
+        timestamp=now + timedelta(seconds=3),
+        station_id="bus-1",
+        msg_type=MessageType.CAM,
+        latitude=52.0,
+        longitude=13.0,
+    )
+
+    issues = collect_prioritization_issue_history([srem, cam_after_timeout, later_cam])
+
+    assert [issue.issue_type for issue in issues] == ["TIMEOUT"]
+    assert issues[0].timestamp == cam_after_timeout.timestamp
+
+
+def test_collect_prioritization_issue_occurrences_keeps_replay_index_and_source(now):
+    source = MessageSource(
+        path="C:/captures/rsu_txa.pcap",
+        filename="rsu_txa.pcap",
+        source_index=0,
+        role=CaptureRole.TXA,
+    )
+    srem = V2xMessage(
+        timestamp=now,
+        station_id="bus-1",
+        msg_type=MessageType.SREM,
+        latitude=52.0,
+        longitude=13.0,
+        source=source,
+        merge_group_id="merge-00001",
+        decoded_data={
+            "intersectionId": 42,
+            "requestId": 12,
+            "sequenceNumber": 1,
+            "inLane": 1,
+            "outLane": 3,
+        },
+    )
+    cam_after_timeout = V2xMessage(
+        timestamp=now + timedelta(seconds=2),
+        station_id="bus-1",
+        msg_type=MessageType.CAM,
+        latitude=52.0,
+        longitude=13.0,
+    )
+
+    occurrences = collect_prioritization_issue_occurrences([srem, cam_after_timeout])
+
+    assert len(occurrences) == 1
+    assert occurrences[0].message_index == 1
+    assert occurrences[0].issue.source_roles == ("TXA",)
+    assert occurrences[0].issue.source_files == ("rsu_txa.pcap",)
+    assert occurrences[0].issue.merge_group_id == "merge-00001"
 
 
 def test_build_request_visuals_keeps_recently_answered_request_visible(now):

@@ -41,12 +41,16 @@ from ..kml_exporter import export_kml
 from ..map_widget import MapWidget
 from ..parsing_worker import ParsingWorker
 from ..player_controller import SPEED_OPTIONS, PlayerController
+from ..prioritization_exporter import export_prioritization_issues
 from .eta_graph_widget import EtaGraphWidget, build_eta_selection_options
 from ..scene_model import (
     ActiveRequest,
+    PrioritizationIssue,
     RequestOperationalStatus,
     SceneSnapshot,
+    build_prioritization_issues,
     build_scene_snapshot,
+    collect_prioritization_issue_occurrences,
     get_request_operational_status,
     find_overdue_requests,
     get_clock_skew_warnings,
@@ -102,6 +106,10 @@ class MainWindow(QMainWindow):
         self._last_highlighted_row: Optional[int] = None
         self._last_detail_key: Optional[tuple[str, str]] = None
         self._pending_detail_message: Optional[V2xMessage] = None
+        self._current_prioritization_issues: list[PrioritizationIssue] = []
+        self._issue_filter_mode = "all"
+        self._issue_filter_intersection = "all"
+        self._problem_replay_indices: list[int] = []
         self._message_table_maximized = False
 
         self._setup_ui()
@@ -126,7 +134,7 @@ class MainWindow(QMainWindow):
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._map_widget = MapWidget()
-        self._splitter.addWidget(self._map_widget)
+        self._splitter.addWidget(self._setup_map_area())
         self._splitter.addWidget(self._setup_message_list())
         self._splitter.setStretchFactor(0, 7)
         self._splitter.setStretchFactor(1, 3)
@@ -143,6 +151,66 @@ class MainWindow(QMainWindow):
         self._statusbar.addPermanentWidget(self._status_metrics)
         self._statusbar.addPermanentWidget(self._progress)
         self._statusbar.showMessage("Bereit - PCAP-Datei laden oder per Drag & Drop ablegen")
+
+    def _setup_map_area(self) -> QWidget:
+        """Create the map with a compact prioritization issue side panel."""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(self._map_widget, stretch=1)
+
+        issue_panel = QFrame()
+        issue_panel.setObjectName("PrioritizationIssuePanel")
+        issue_panel.setMinimumWidth(260)
+        issue_panel.setMaximumWidth(320)
+        issue_panel.setStyleSheet(
+            "QFrame#PrioritizationIssuePanel {"
+            "background: #f8fbff; border: 1px solid #d7dde8; border-radius: 10px;"
+            "}"
+        )
+        issue_layout = QVBoxLayout(issue_panel)
+        issue_layout.setContentsMargins(10, 10, 10, 10)
+        issue_layout.setSpacing(6)
+
+        title = QLabel("Priorisierungsfehler")
+        title.setStyleSheet("font-weight: 700; color: #10233f;")
+        issue_layout.addWidget(title)
+
+        self._issue_summary = QLabel("Keine Fehler.")
+        self._issue_summary.setWordWrap(True)
+        self._issue_summary.setStyleSheet("color: #42546b; font-size: 11px;")
+        issue_layout.addWidget(self._issue_summary)
+
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        filter_row.setSpacing(6)
+        self._issue_filter_combo = QComboBox()
+        self._issue_filter_combo.addItem("Alle", "all")
+        self._issue_filter_combo.addItem("Nur kritisch", "critical")
+        self._issue_filter_combo.addItem("Aktuelle Kreuzung", "intersection")
+        self._issue_filter_combo.setToolTip("Priorisierungsfehler nach Schwere oder Kreuzung filtern")
+        self._issue_filter_combo.currentIndexChanged.connect(self._on_issue_filter_changed)
+        self._issue_intersection_combo = QComboBox()
+        self._issue_intersection_combo.addItem("Alle Kreuzungen", "all")
+        self._issue_intersection_combo.setToolTip("Fehler auf eine Kreuzung eingrenzen")
+        self._issue_intersection_combo.currentIndexChanged.connect(self._on_issue_filter_changed)
+        filter_row.addWidget(self._issue_filter_combo, stretch=1)
+        filter_row.addWidget(self._issue_intersection_combo, stretch=1)
+        issue_layout.addLayout(filter_row)
+
+        self._issue_list = QListWidget()
+        self._issue_list.setAlternatingRowColors(True)
+        self._issue_list.setStyleSheet(
+            "QListWidget { background: transparent; border: none; }"
+            "QListWidget::item { margin: 3px 0; padding: 7px; border-radius: 7px; }"
+            "QListWidget::item:selected { background: #dbeafe; color: #111827; }"
+        )
+        self._issue_list.itemClicked.connect(self._on_prioritization_issue_clicked)
+        issue_layout.addWidget(self._issue_list, stretch=1)
+
+        layout.addWidget(issue_panel)
+        return container
 
     def _setup_toolbar(self) -> None:
         """Create the toolbar with file operations."""
@@ -168,6 +236,10 @@ class MainWindow(QMainWindow):
         self._btn_export_kml = QPushButton("KML exportieren")
         self._btn_export_kml.setToolTip("KML-Dateien fuer alle gefilterten Entitaeten exportieren")
         toolbar.addWidget(self._btn_export_kml)
+
+        self._btn_export_issues = QPushButton("Fehler exportieren")
+        self._btn_export_issues.setToolTip("Priorisierungsfehler als CSV und JSON exportieren")
+        toolbar.addWidget(self._btn_export_issues)
 
         toolbar.addSeparator()
 
@@ -515,13 +587,24 @@ class MainWindow(QMainWindow):
         self._btn_play = QPushButton("Play")
         self._btn_pause = QPushButton("Pause")
         self._btn_stop = QPushButton("Stop")
+        self._btn_prev_issue = QPushButton("Fehler zurueck")
+        self._btn_next_issue = QPushButton("Naechster Fehler")
+        self._chk_problem_replay = QCheckBox("Nur Problemstellen")
         self._btn_play.setFixedWidth(72)
         self._btn_pause.setFixedWidth(72)
         self._btn_stop.setFixedWidth(72)
+        self._btn_prev_issue.setToolTip("Zur vorherigen priorisierungsrelevanten Problemstelle springen")
+        self._btn_next_issue.setToolTip("Zur naechsten priorisierungsrelevanten Problemstelle springen")
+        self._chk_problem_replay.setToolTip(
+            "Playback emittiert nur Nachrichten an Zeitpunkten mit Priorisierungsfehlern"
+        )
 
         layout.addWidget(self._btn_play)
         layout.addWidget(self._btn_pause)
         layout.addWidget(self._btn_stop)
+        layout.addWidget(self._chk_problem_replay)
+        layout.addWidget(self._btn_prev_issue)
+        layout.addWidget(self._btn_next_issue)
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, 1000)
@@ -551,11 +634,15 @@ class MainWindow(QMainWindow):
         self._btn_reload_last.clicked.connect(self._on_reload_last_session)
         self._btn_cancel_load.clicked.connect(self._on_cancel_load)
         self._btn_export_kml.clicked.connect(self._on_export_kml)
+        self._btn_export_issues.clicked.connect(self._on_export_prioritization_issues)
         self._btn_update_schemas.clicked.connect(self._on_update_schemas)
 
         self._btn_play.clicked.connect(self._player.play)
         self._btn_pause.clicked.connect(self._player.pause)
         self._btn_stop.clicked.connect(self._player.stop)
+        self._btn_prev_issue.clicked.connect(self._player.seek_to_previous_focus)
+        self._btn_next_issue.clicked.connect(self._player.seek_to_next_focus)
+        self._chk_problem_replay.toggled.connect(self._on_problem_replay_toggled)
         self._speed_combo.currentIndexChanged.connect(self._on_speed_changed)
         self._slider.sliderMoved.connect(self._on_slider_moved)
         self._station_list.itemSelectionChanged.connect(self._on_station_filter_changed)
@@ -657,6 +744,7 @@ class MainWindow(QMainWindow):
         self._populate_message_table(session.messages)
         self._map_widget.load_messages(session.messages)
         self._player.set_session(session)
+        self._refresh_problem_replay_indices(session.messages)
         self._refresh_eta_analysis(session.messages)
         self._detail_table.hide()
         self._update_scene_for_message(session.messages[0])
@@ -739,6 +827,36 @@ class MainWindow(QMainWindow):
             f"{len(created)} KML-Dateien wurden exportiert nach:\n{dir_path}",
         )
 
+    def _on_export_prioritization_issues(self) -> None:
+        """Export prioritization issue diagnostics as CSV and JSON."""
+        if not self._session:
+            return
+
+        start_dir = self._memory.last_export_directory or self._memory.last_directory or str(Path.cwd())
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "Fehleranalyse-Exportverzeichnis waehlen",
+            start_dir,
+        )
+        if not dir_path:
+            return
+
+        try:
+            created = export_prioritization_issues(self._player._messages, Path(dir_path))
+        except Exception as exc:  # pragma: no cover
+            QMessageBox.critical(self, "Export-Fehler", str(exc))
+            return
+
+        self._memory.remember_export_directory(dir_path)
+        self._memory.save()
+        self._statusbar.showMessage(f"Priorisierungsfehler exportiert nach {dir_path}")
+        QMessageBox.information(
+            self,
+            "Export erfolgreich",
+            "Priorisierungsfehler wurden exportiert:\n"
+            + "\n".join(str(path) for path in created),
+        )
+
     def _on_update_schemas(self) -> None:
         """Update ASN.1 schemas from the Git repository."""
         try:
@@ -791,6 +909,7 @@ class MainWindow(QMainWindow):
         self._populate_message_table(filtered)
         self._map_widget.load_messages(filtered)
         self._player.set_filtered_messages(filtered)
+        self._refresh_problem_replay_indices(filtered)
         self._update_scene_for_message(filtered[0] if filtered else None)
         self._lbl_filter_hint.setText(
             f"{len(filtered)} von {len(self._session.messages)} Nachrichten sichtbar"
@@ -971,9 +1090,42 @@ class MainWindow(QMainWindow):
         if 0 <= index < len(SPEED_OPTIONS):
             self._player.set_speed(SPEED_OPTIONS[index])
 
+    def _on_problem_replay_toggled(self, enabled: bool) -> None:
+        """Enable or disable replay that jumps only between issue timestamps."""
+        self._player.set_focus_replay_enabled(enabled)
+        if enabled and not self._problem_replay_indices:
+            self._statusbar.showMessage("Keine Problemstellen fuer den aktuellen Filter gefunden", 4000)
+        elif enabled:
+            self._statusbar.showMessage(
+                f"Problemstellen-Replay aktiv: {len(self._problem_replay_indices)} Zeitpunkt(e)",
+                4000,
+            )
+        else:
+            self._statusbar.showMessage("Problemstellen-Replay deaktiviert", 3000)
+
     def _on_slider_moved(self, value: int) -> None:
         """Seek playback when the timeline slider is moved."""
         self._player.seek_to_position(value / 1000.0)
+
+    def _refresh_problem_replay_indices(self, messages: list[V2xMessage]) -> None:
+        """Precompute playback indices at which prioritization issues occur."""
+        indices = [
+            occurrence.message_index
+            for occurrence in collect_prioritization_issue_occurrences(messages)
+        ]
+
+        self._problem_replay_indices = indices
+        self._player.set_focus_indices(indices)
+        if hasattr(self, "_btn_prev_issue"):
+            has_issues = bool(indices)
+            self._btn_prev_issue.setEnabled(has_issues)
+            self._btn_next_issue.setEnabled(has_issues)
+            self._chk_problem_replay.setEnabled(has_issues)
+            if not has_issues:
+                self._chk_problem_replay.blockSignals(True)
+                self._chk_problem_replay.setChecked(False)
+                self._chk_problem_replay.blockSignals(False)
+                self._player.set_focus_replay_enabled(False)
 
     def _on_table_row_clicked(self, row: int, _: int) -> None:
         """Jump playback to the clicked row and show the message details."""
@@ -1028,10 +1180,12 @@ class MainWindow(QMainWindow):
         """Rebuild and display the current scene snapshot for one playback position."""
         if msg is None or not self._player._messages:
             self._clear_scene_panel()
+            self._refresh_prioritization_issues([])
             return
 
         scene = build_scene_snapshot(self._player._messages, msg.timestamp)
         self._render_scene_snapshot(scene)
+        self._refresh_prioritization_issues(build_prioritization_issues(scene))
 
     def _render_scene_snapshot(self, scene: SceneSnapshot) -> None:
         """Render a scene snapshot into the scene panel widgets."""
@@ -1173,6 +1327,152 @@ class MainWindow(QMainWindow):
             self._scene_requests_table.setItem(row, 3, QTableWidgetItem(status))
             self._scene_requests_table.setItem(row, 4, QTableWidgetItem(lane_text))
 
+    def _refresh_prioritization_issues(self, issues: list[PrioritizationIssue]) -> None:
+        """Render prioritization issues in the map-side panel."""
+        self._current_prioritization_issues = issues
+        if not hasattr(self, "_issue_list"):
+            return
+        self._issue_list.clear()
+        self._refresh_issue_intersection_filter(issues)
+        if not issues:
+            self._issue_summary.setText("Keine priorisierungsrelevanten Fehler im aktuellen Zeitpunkt.")
+            return
+
+        filtered_issues = self._filter_prioritization_issues(issues)
+        errors = sum(1 for issue in filtered_issues if issue.severity == "error")
+        warnings = len(filtered_issues) - errors
+        filter_suffix = "" if len(filtered_issues) == len(issues) else f" von {len(issues)}"
+        self._issue_summary.setText(
+            f"{errors} Fehler, {warnings} Warnung(en){filter_suffix}. Klick fokussiert Request."
+        )
+        if not filtered_issues:
+            self._issue_summary.setText(
+                f"Keine Fehler im aktuellen Filter ({len(issues)} insgesamt)."
+            )
+            return
+
+        for issue in filtered_issues:
+            item = QListWidgetItem(self._format_issue_item(issue))
+            item.setData(Qt.ItemDataRole.UserRole, issue)
+            item.setToolTip(issue.message)
+            item.setForeground(Qt.GlobalColor.darkRed if issue.severity == "error" else Qt.GlobalColor.darkYellow)
+            self._issue_list.addItem(item)
+
+    def _refresh_issue_intersection_filter(self, issues: list[PrioritizationIssue]) -> None:
+        """Keep the intersection filter options aligned with the current issues."""
+        if not hasattr(self, "_issue_intersection_combo"):
+            return
+        current = self._issue_intersection_combo.currentData() or "all"
+        intersection_ids = sorted({issue.intersection_id for issue in issues})
+        self._issue_intersection_combo.blockSignals(True)
+        self._issue_intersection_combo.clear()
+        self._issue_intersection_combo.addItem("Alle Kreuzungen", "all")
+        for intersection_id in intersection_ids:
+            self._issue_intersection_combo.addItem(f"I{intersection_id}", str(intersection_id))
+        index = self._issue_intersection_combo.findData(current)
+        self._issue_intersection_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._issue_intersection_combo.blockSignals(False)
+        self._issue_filter_intersection = str(self._issue_intersection_combo.currentData() or "all")
+
+    def _filter_prioritization_issues(
+        self,
+        issues: list[PrioritizationIssue],
+    ) -> list[PrioritizationIssue]:
+        """Apply operator-selected issue-panel filters."""
+        mode = getattr(self, "_issue_filter_mode", "all")
+        intersection_filter = getattr(self, "_issue_filter_intersection", "all")
+        filtered = issues
+        if mode == "critical":
+            filtered = [issue for issue in filtered if issue.severity == "error"]
+        if mode == "intersection" and intersection_filter == "all":
+            return filtered
+        if intersection_filter != "all":
+            try:
+                intersection_id = int(intersection_filter)
+            except ValueError:
+                return filtered
+            filtered = [issue for issue in filtered if issue.intersection_id == intersection_id]
+        return filtered
+
+    def _on_issue_filter_changed(self, *_args) -> None:
+        """Refresh the issue panel when an operator changes diagnostics filters."""
+        if hasattr(self, "_issue_filter_combo"):
+            self._issue_filter_mode = str(self._issue_filter_combo.currentData() or "all")
+        if hasattr(self, "_issue_intersection_combo"):
+            self._issue_filter_intersection = str(
+                self._issue_intersection_combo.currentData() or "all"
+            )
+        issues = list(getattr(self, "_current_prioritization_issues", []))
+        if issues:
+            self._refresh_prioritization_issues(issues)
+
+    def _format_issue_item(self, issue: PrioritizationIssue) -> str:
+        """Return compact issue card text."""
+        lane_text = f"{issue.in_lane or '-'} -> {issue.out_lane or '-'}"
+        delay_text = f"\nDelay: {issue.delay_seconds:.2f}s" if issue.delay_seconds is not None else ""
+        return (
+            f"{issue.issue_type}\n"
+            f"I{issue.intersection_id} | Req {issue.request_id}/Seq {issue.sequence_number}\n"
+            f"Lane {lane_text} | {issue.station_id}{delay_text}\n"
+            f"{issue.source_summary}"
+        )
+
+    def _on_prioritization_issue_clicked(self, item: QListWidgetItem) -> None:
+        """Synchronize map, ETA and details with a clicked prioritization issue."""
+        issue = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(issue, PrioritizationIssue):
+            return
+        self._map_widget.highlight_request(issue.intersection_id, issue.request_id, issue.sequence_number)
+        self._map_widget.focus_intersection(issue.intersection_id)
+        self._select_eta_issue(issue)
+        self._select_issue_message(issue)
+
+    def _select_eta_issue(self, issue: PrioritizationIssue) -> None:
+        """Select the matching ETA request track if present."""
+        prefix = f"REQ:{issue.intersection_id}:{issue.request_id}:{issue.sequence_number}:{issue.station_id}:"
+        for index in range(self._eta_station_combo.count()):
+            key = self._eta_station_combo.itemData(index)
+            if isinstance(key, str) and key.startswith(prefix):
+                self._eta_station_combo.setCurrentIndex(index)
+                return
+
+    def _select_issue_message(self, issue: PrioritizationIssue) -> None:
+        """Jump to a correlated SREM/SSEM message for the issue when possible."""
+        for index, msg in enumerate(self._player._messages):
+            if msg.msg_type not in {MessageType.SREM, MessageType.SSEM}:
+                continue
+            if (
+                self._coerce_detail_int(msg.decoded_data.get("intersectionId")) == issue.intersection_id
+                and self._coerce_detail_int(msg.decoded_data.get("requestId")) == issue.request_id
+                and self._coerce_detail_int(msg.decoded_data.get("sequenceNumber")) == issue.sequence_number
+            ):
+                self._player.seek_to_index(index)
+                self._highlight_table_row(msg)
+                self._show_security_detail(msg, auto_focus=True, force_refresh=True)
+                return
+
+    def _coerce_detail_int(self, value: object) -> Optional[int]:
+        """Small UI-local integer coercion for issue/message matching."""
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return None
+        if isinstance(value, tuple) and len(value) >= 2:
+            return self._coerce_detail_int(value[1])
+        if isinstance(value, dict):
+            for key in ("id", "value", "requestId", "requestID", "sequenceNumber"):
+                nested = self._coerce_detail_int(value.get(key))
+                if nested is not None:
+                    return nested
+        return None
+
     def _format_forecast_summary(self, forecast) -> str:
         """Build a compact one-line summary of a SPAT forecast."""
         if forecast is None or not forecast.segments_by_group:
@@ -1311,8 +1611,13 @@ class MainWindow(QMainWindow):
         self._btn_pause.setEnabled(False)
         self._btn_stop.setEnabled(enabled)
         self._btn_export_kml.setEnabled(enabled)
+        self._btn_export_issues.setEnabled(enabled)
         self._slider.setEnabled(enabled)
         self._speed_combo.setEnabled(enabled)
+        has_issues = enabled and bool(self._problem_replay_indices)
+        self._btn_prev_issue.setEnabled(has_issues)
+        self._btn_next_issue.setEnabled(has_issues)
+        self._chk_problem_replay.setEnabled(has_issues)
         self._btn_reload_last.setEnabled(bool(self._memory.existing_last_session_files()))
 
     def _set_loading_state(
@@ -1397,6 +1702,8 @@ class MainWindow(QMainWindow):
         self._last_highlighted_row = None
         self._last_detail_key = None
         self._pending_detail_message = None
+        self._problem_replay_indices = []
+        self._refresh_prioritization_issues([])
         self._detail_table.hide()
         self._clear_scene_panel()
         if hasattr(self, "_eta_station_combo"):
@@ -1420,7 +1727,20 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_right_splitter"):
             self._right_splitter.setSizes([460, 280])
         self._message_table_maximized = False
+        self._issue_filter_mode = "all"
+        self._issue_filter_intersection = "all"
+        if hasattr(self, "_issue_filter_combo"):
+            self._issue_filter_combo.blockSignals(True)
+            self._issue_filter_combo.setCurrentIndex(0)
+            self._issue_filter_combo.blockSignals(False)
+        if hasattr(self, "_issue_intersection_combo"):
+            self._issue_intersection_combo.blockSignals(True)
+            self._issue_intersection_combo.clear()
+            self._issue_intersection_combo.addItem("Alle Kreuzungen", "all")
+            self._issue_intersection_combo.blockSignals(False)
         self._player.set_filtered_messages([])
+        self._player.set_focus_indices([])
+        self._player.set_focus_replay_enabled(False)
         self._all_station_ids.clear()
         self._active_stations.clear()
         self._station_list.clear()

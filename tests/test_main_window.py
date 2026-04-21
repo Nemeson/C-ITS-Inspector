@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pcap2kml_player.data_model import MessageType, V2xMessage
+from pcap2kml_player.scene_model import PrioritizationIssue
 from pcap2kml_player.ui.main_window import COL_TIMESTAMP, MainWindow
 
 
@@ -216,3 +217,46 @@ def test_toggle_message_table_maximized_hides_context_tabs():
     assert window._context_tabs.visible is True
     assert window._right_splitter.sizes == [460, 280]
     assert window._btn_toggle_message_table.text == "Tabelle maximieren"
+
+
+def test_filter_prioritization_issues_by_severity_and_intersection():
+    window = MainWindow.__new__(MainWindow)
+    window._issue_filter_mode = "critical"
+    window._issue_filter_intersection = "42"
+    now = datetime(2026, 4, 19, 12, 0, 0, tzinfo=timezone.utc)
+    issues = [
+        PrioritizationIssue(
+            issue_type="TIMEOUT",
+            severity="error",
+            intersection_id=42,
+            request_id=1,
+            sequence_number=1,
+            station_id="bus-1",
+            message="timeout",
+            timestamp=now,
+        ),
+        PrioritizationIssue(
+            issue_type="ETA_CONFLICT",
+            severity="warning",
+            intersection_id=42,
+            request_id=2,
+            sequence_number=1,
+            station_id="bus-2",
+            message="eta",
+            timestamp=now,
+        ),
+        PrioritizationIssue(
+            issue_type="REJECTED",
+            severity="error",
+            intersection_id=7,
+            request_id=3,
+            sequence_number=1,
+            station_id="bus-3",
+            message="rejected",
+            timestamp=now,
+        ),
+    ]
+
+    filtered = window._filter_prioritization_issues(issues)
+
+    assert [issue.request_id for issue in filtered] == [1]

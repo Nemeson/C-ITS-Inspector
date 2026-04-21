@@ -110,6 +110,10 @@ class ActiveRequest:
     requested_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     responded_at: Optional[datetime] = None
     ssem_status: Optional[str] = None
+    source_files: tuple[str, ...] = ()
+    source_roles: tuple[str, ...] = ()
+    merge_group_id: Optional[str] = None
+    merge_confidence: Optional[float] = None
 
     @property
     def is_pending(self) -> bool:
@@ -161,6 +165,35 @@ class EtaVerification:
     def is_accurate(self) -> bool:
         """Whether the ETA error stays within a 2-second operator tolerance."""
         return abs(self.delta_seconds) <= 2.0
+
+
+@dataclass
+class PrioritizationIssue:
+    """Operator-facing SREM/SSEM prioritization issue shown outside the map."""
+    issue_type: str
+    severity: str
+    intersection_id: int
+    request_id: int
+    sequence_number: int
+    station_id: str
+    message: str
+    timestamp: datetime
+    in_lane: Optional[int] = None
+    out_lane: Optional[int] = None
+    status: Optional[str] = None
+    delay_seconds: Optional[float] = None
+    source_summary: str = "-"
+    source_files: tuple[str, ...] = ()
+    source_roles: tuple[str, ...] = ()
+    merge_group_id: Optional[str] = None
+    merge_confidence: Optional[float] = None
+
+
+@dataclass
+class PrioritizationIssueOccurrence:
+    """First stream position where one prioritization issue becomes visible."""
+    issue: PrioritizationIssue
+    message_index: int
 
 
 # -----------------------------------------------------------------------------
@@ -318,6 +351,7 @@ def build_scene_snapshot(
                 continue
             request.responded_at = msg.timestamp
             request.ssem_status = response["status"]
+            _merge_request_provenance(request, msg)
 
     for request in requests.values():
         verification = _verify_eta_against_cam(
@@ -373,6 +407,8 @@ def build_request_visuals(
 
     for request in scene.request_states:
         status = get_request_operational_status(request, scene.timeline_position)
+        if status == RequestOperationalStatus.TIMEOUT:
+            continue
         if request.responded_at is not None:
             age_seconds = (scene.timeline_position - request.responded_at).total_seconds()
             if age_seconds > recent_response_seconds:
@@ -407,6 +443,231 @@ def build_request_visuals(
             visual.is_dominant = index == 0
 
     return visuals_by_intersection
+
+
+def build_prioritization_issues(scene: SceneSnapshot) -> list[PrioritizationIssue]:
+    """Build sorted SREM/SSEM issues for the side-panel diagnostics."""
+    issues: list[PrioritizationIssue] = []
+    requests_by_key = {
+        (request.intersection_id, request.request_id, request.sequence_number, request.station_id): request
+        for request in scene.request_states
+    }
+
+    for request in scene.request_states:
+        status = get_request_operational_status(request, scene.timeline_position)
+        if status == RequestOperationalStatus.TIMEOUT:
+            delay_seconds = (scene.timeline_position - request.requested_at).total_seconds()
+            issues.append(
+                _issue_from_request(
+                    request,
+                    issue_type="TIMEOUT",
+                    severity="error",
+                    message=f"SREM ohne rechtzeitige SSEM-Antwort ({delay_seconds:.2f}s).",
+                    timestamp=scene.timeline_position,
+                    status=status.value,
+                    delay_seconds=delay_seconds,
+                )
+            )
+            continue
+        if request.responded_at is None:
+            continue
+
+        response_delay = (request.responded_at - request.requested_at).total_seconds()
+        if status == RequestOperationalStatus.REJECTED:
+            issues.append(
+                _issue_from_request(
+                    request,
+                    issue_type="REJECTED",
+                    severity="error",
+                    message=f"SSEM lehnt Priorisierung ab: {request.ssem_status}.",
+                    timestamp=request.responded_at,
+                    status=request.ssem_status,
+                    delay_seconds=response_delay,
+                )
+            )
+        elif status == RequestOperationalStatus.GRANTED and response_delay > _TIMEOUT_DEFAULT_S:
+            issues.append(
+                _issue_from_request(
+                    request,
+                    issue_type="LATE_GRANTED",
+                    severity="warning",
+                    message=f"SSEM granted kam verspaetet ({response_delay:.2f}s).",
+                    timestamp=request.responded_at,
+                    status=request.ssem_status,
+                    delay_seconds=response_delay,
+                )
+            )
+
+        if request.in_lane is None or request.out_lane is None:
+            issues.append(
+                _issue_from_request(
+                    request,
+                    issue_type="MISSING_MAP_MATCH",
+                    severity="warning",
+                    message="SREM-Lanes koennen nicht vollstaendig auf MAP-Geometrie gemappt werden.",
+                    timestamp=request.responded_at,
+                    status=request.ssem_status,
+                    delay_seconds=response_delay,
+                )
+            )
+
+    granted_windows = {
+        key: request
+        for key, request in requests_by_key.items()
+        if request.responded_at is not None
+        and get_request_operational_status(request, scene.timeline_position) == RequestOperationalStatus.GRANTED
+    }
+    for verification in scene.eta_verifications:
+        key = (
+            verification.intersection_id,
+            verification.request_id,
+            verification.sequence_number,
+            verification.station_id,
+        )
+        request = requests_by_key.get(key)
+        if request is None:
+            continue
+        if not verification.is_accurate:
+            issues.append(
+                _issue_from_request(
+                    request,
+                    issue_type="ETA_CONFLICT",
+                    severity="warning",
+                    message=f"ETA-Abweichung {verification.delta_seconds:+.1f}s an der Stopline.",
+                    timestamp=verification.actual_arrival,
+                    status=request.ssem_status,
+                    delay_seconds=verification.delta_seconds,
+                )
+            )
+        granted_request = granted_windows.get(key)
+        if granted_request is None or granted_request.responded_at is None or granted_request.responded_at > verification.actual_arrival:
+            issues.append(
+                _issue_from_request(
+                    request,
+                    issue_type="STOPLINE_WITHOUT_GRANTED",
+                    severity="error",
+                    message="Fahrzeug passiert Stopline ohne vorheriges granted.",
+                    timestamp=verification.actual_arrival,
+                    status=request.ssem_status,
+                )
+            )
+
+    return sorted(issues, key=lambda issue: (_issue_priority(issue.issue_type), issue.timestamp))
+
+
+def collect_prioritization_issue_occurrences(
+    messages: list[V2xMessage],
+) -> list[PrioritizationIssueOccurrence]:
+    """Return cached first visible stream index for each prioritization issue."""
+    return _cached_prioritization_issue_occurrences(messages)
+
+
+def _collect_prioritization_issue_occurrences_uncached(
+    messages: list[V2xMessage],
+) -> list[PrioritizationIssueOccurrence]:
+    """Collect first visible stream index for each prioritization issue.
+
+    The function is intentionally the shared basis for export and problem replay,
+    so both surfaces highlight the same first occurrence in large TXA/RXA merges.
+    """
+    occurrences: list[PrioritizationIssueOccurrence] = []
+    seen_issue_keys: set[tuple[str, int, int, int, str]] = set()
+    for index, msg in enumerate(messages):
+        if msg.msg_type not in {MessageType.SREM, MessageType.SSEM, MessageType.CAM}:
+            continue
+        scene = build_scene_snapshot(messages, msg.timestamp)
+        for issue in build_prioritization_issues(scene):
+            issue_key = (
+                issue.issue_type,
+                issue.intersection_id,
+                issue.request_id,
+                issue.sequence_number,
+                issue.station_id,
+            )
+            if issue_key in seen_issue_keys:
+                continue
+            seen_issue_keys.add(issue_key)
+            occurrences.append(PrioritizationIssueOccurrence(issue=issue, message_index=index))
+    return sorted(
+        occurrences,
+        key=lambda occurrence: (
+            occurrence.issue.timestamp,
+            _issue_priority(occurrence.issue.issue_type),
+            occurrence.message_index,
+        ),
+    )
+
+
+_ISSUE_HISTORY_CACHE: dict[
+    tuple[int, int, Optional[datetime]],
+    list[PrioritizationIssueOccurrence],
+] = {}
+
+
+def collect_prioritization_issue_history(messages: list[V2xMessage]) -> list[PrioritizationIssue]:
+    """Collect first occurrence of each prioritization issue across a message stream."""
+    return [occurrence.issue for occurrence in _cached_prioritization_issue_occurrences(messages)]
+
+
+def _cached_prioritization_issue_occurrences(
+    messages: list[V2xMessage],
+) -> list[PrioritizationIssueOccurrence]:
+    """Return cached issue occurrences for unchanged in-memory message lists."""
+    last_timestamp = messages[-1].timestamp if messages else None
+    cache_key = (id(messages), len(messages), last_timestamp)
+    cached = _ISSUE_HISTORY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    occurrences = _collect_prioritization_issue_occurrences_uncached(messages)
+    _ISSUE_HISTORY_CACHE.clear()
+    _ISSUE_HISTORY_CACHE[cache_key] = occurrences
+    return occurrences
+
+
+def _issue_from_request(
+    request: ActiveRequest,
+    *,
+    issue_type: str,
+    severity: str,
+    message: str,
+    timestamp: datetime,
+    status: Optional[str],
+    delay_seconds: Optional[float] = None,
+) -> PrioritizationIssue:
+    """Create a side-panel issue from one request."""
+    source_summary = _format_request_source_summary(request)
+    return PrioritizationIssue(
+        issue_type=issue_type,
+        severity=severity,
+        intersection_id=request.intersection_id,
+        request_id=request.request_id,
+        sequence_number=request.sequence_number,
+        station_id=request.station_id,
+        in_lane=request.in_lane,
+        out_lane=request.out_lane,
+        status=status,
+        delay_seconds=delay_seconds,
+        message=message,
+        timestamp=timestamp,
+        source_summary=source_summary,
+        source_files=request.source_files,
+        source_roles=request.source_roles,
+        merge_group_id=request.merge_group_id,
+        merge_confidence=request.merge_confidence,
+    )
+
+
+def _issue_priority(issue_type: str) -> int:
+    order = {
+        "TIMEOUT": 0,
+        "REJECTED": 1,
+        "STOPLINE_WITHOUT_GRANTED": 2,
+        "LATE_GRANTED": 3,
+        "ETA_CONFLICT": 4,
+        "MISSING_MAP_MATCH": 5,
+    }
+    return order.get(issue_type, 99)
 
 
 def _iter_map_intersections(msg: V2xMessage) -> list[dict]:
@@ -574,6 +835,10 @@ def _build_active_request(msg: V2xMessage) -> Optional[ActiveRequest]:
         out_lane=_coerce_int(msg.decoded_data.get("outLane")),
         eta=_coerce_datetime(msg.decoded_data.get("eta"), reference_time=msg.timestamp),
         requested_at=msg.timestamp,
+        source_files=_message_source_files(msg),
+        source_roles=_message_source_roles(msg),
+        merge_group_id=msg.merge_group_id,
+        merge_confidence=msg.merge_confidence,
     )
 
 
@@ -596,6 +861,39 @@ def _extract_ssem_response(msg: V2xMessage) -> Optional[dict[str, int | str]]:
         "intersection_id": intersection_id,
         "status": status,
     }
+
+
+def _merge_request_provenance(request: ActiveRequest, msg: V2xMessage) -> None:
+    """Attach SSEM provenance to the originating SREM request."""
+    request.source_files = _sorted_unique((*request.source_files, *_message_source_files(msg)))
+    request.source_roles = _sorted_unique((*request.source_roles, *_message_source_roles(msg)))
+    if request.merge_group_id is None and msg.merge_group_id:
+        request.merge_group_id = msg.merge_group_id
+    if request.merge_confidence is None and msg.merge_confidence is not None:
+        request.merge_confidence = msg.merge_confidence
+
+
+def _message_source_files(msg: V2xMessage) -> tuple[str, ...]:
+    if msg.source is None:
+        return ()
+    return (msg.source.filename,)
+
+
+def _message_source_roles(msg: V2xMessage) -> tuple[str, ...]:
+    if msg.source is None:
+        return ()
+    return (msg.source.role.value.upper(),)
+
+
+def _sorted_unique(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(sorted({value for value in values if value}))
+
+
+def _format_request_source_summary(request: ActiveRequest) -> str:
+    roles = "/".join(request.source_roles) if request.source_roles else "UNKNOWN"
+    files = ", ".join(request.source_files) if request.source_files else "unbekannte Datei"
+    merge = f" | {request.merge_group_id}" if request.merge_group_id else ""
+    return f"{roles}: {files}{merge}"
 
 
 def _parse_phase(value: object) -> Optional[MovementPhaseState]:

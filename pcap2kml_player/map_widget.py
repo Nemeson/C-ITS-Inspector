@@ -456,6 +456,39 @@ def _spat_states_by_group(intersection: dict) -> dict[int, str]:
     return states_by_group
 
 
+def _spat_tooltips_by_group(intersection: dict) -> dict[int, str]:
+    """Build hover tooltip text with active movement state and timing fields."""
+    tooltips: dict[int, str] = {}
+    states = intersection.get("states")
+    if not isinstance(states, list):
+        return tooltips
+    for signal_group in states:
+        if not isinstance(signal_group, dict):
+            continue
+        signal_group_id = _coerce_int(signal_group.get("signalGroup"))
+        if signal_group_id is None:
+            continue
+        events = signal_group.get("stateTimeSpeed", signal_group.get("state-time-speed"))
+        if not isinstance(events, list):
+            continue
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_state = event.get("eventState")
+            if not isinstance(event_state, str) or not event_state:
+                continue
+            parts = [f"MovementState: {event_state}"]
+            timing = event.get("timing")
+            if isinstance(timing, dict):
+                for key in ("minEndTime", "maxEndTime", "likelyTime", "timeConfidence"):
+                    value = timing.get(key)
+                    if value is not None:
+                        parts.append(f"{key}: {value}")
+            tooltips[signal_group_id] = " | ".join(parts)
+            break
+    return tooltips
+
+
 def _lane_signal_group_ids(lane: dict) -> list[int]:
     """Extract related SPAT signal groups for one MAP lane."""
     signal_groups: list[int] = []
@@ -686,6 +719,7 @@ def _infrastructure_overlays_for_messages(messages: list[V2xMessage]) -> list[di
             if not isinstance(lane_set, list):
                 lane_set = []
             spat_states = _spat_states_by_group(spat_entry[1]) if spat_entry is not None else {}
+            spat_tooltips = _spat_tooltips_by_group(spat_entry[1]) if spat_entry is not None else {}
             lane_by_id = {
                 _coerce_int(lane.get("laneId", lane.get("laneID", lane.get("id")))): lane
                 for lane in lane_set
@@ -776,12 +810,23 @@ def _infrastructure_overlays_for_messages(messages: list[V2xMessage]) -> list[di
                         popup_parts.append(f"SG {signal_group}")
                     if matched_phase:
                         popup_parts.append(matched_phase)
+                    tooltip_parts = [
+                        "Connection",
+                        f"Lane {lane_id or '-'} -> Lane {target_lane_id}",
+                    ]
+                    if signal_group is not None:
+                        tooltip_parts.append(f"Signal Group: {signal_group}")
+                    if signal_group is not None and signal_group in spat_tooltips:
+                        tooltip_parts.append(spat_tooltips[signal_group])
+                    else:
+                        tooltip_parts.append("MovementState: nicht verfuegbar")
                     overlays.append({
                         "kind": "polyline",
                         "id": f"{key}_lane_{polyline_index}_connection_{target_lane_id}",
                         "coords": [[lat, lon] for lat, lon in connection_points],
                         "color": connection_color,
                         "popup": " | ".join(popup_parts),
+                        "tooltip": " | ".join(tooltip_parts),
                         "layer": "map_connections",
                     })
                     matching_requests = [
@@ -1035,7 +1080,24 @@ LEAFLET_HTML = """<!DOCTYPE html>
             }
         }
 
-        function addInfrastructurePolyline(id, coords, color, popup, layerName, weight, opacity, dashArray) {
+        function attachHoverTooltip(layer, tooltip, weight, opacity) {
+            if (!tooltip) {
+                return;
+            }
+            layer.bindTooltip(tooltip, {sticky: true});
+            layer.off('mouseover');
+            layer.off('mouseout');
+            layer.on('mouseover', function() {
+                layer.setStyle({weight: Math.max((weight || 3) + 2, 5), opacity: 1.0});
+                layer.openTooltip();
+            });
+            layer.on('mouseout', function() {
+                layer.setStyle({weight: weight || 3, opacity: opacity || 0.85});
+                layer.closeTooltip();
+            });
+        }
+
+        function addInfrastructurePolyline(id, coords, color, popup, layerName, weight, opacity, dashArray, tooltip) {
             if (infrastructureLayers[id]) {
                 infrastructureLayers[id].setLatLngs(coords);
                 infrastructureLayers[id].setStyle({
@@ -1045,6 +1107,7 @@ LEAFLET_HTML = """<!DOCTYPE html>
                     dashArray: dashArray || '8 6'
                 });
                 infrastructureLayers[id].bindPopup(popup);
+                attachHoverTooltip(infrastructureLayers[id], tooltip, weight, opacity);
             } else {
                 infrastructureLayers[id] = L.polyline(coords, {
                     color: color,
@@ -1052,6 +1115,7 @@ LEAFLET_HTML = """<!DOCTYPE html>
                     opacity: opacity || 0.85,
                     dashArray: dashArray || '8 6'
                 }).addTo(infrastructureGroup(layerName)).bindPopup(popup);
+                attachHoverTooltip(infrastructureLayers[id], tooltip, weight, opacity);
             }
         }
 
@@ -1175,6 +1239,44 @@ LEAFLET_HTML = """<!DOCTYPE html>
                 } catch (error) {
                     console.warn('fitToMarkers skipped:', error);
                 }
+            }
+        }
+
+        function highlightRequest(intersectionId, requestId, sequenceNumber) {
+            var token = 'request_' + requestId + '_' + sequenceNumber;
+            for (var key in infrastructureLayers) {
+                var isMatch = key.indexOf('id:' + intersectionId + '_') === 0 && key.indexOf(token) !== -1;
+                var layer = infrastructureLayers[key];
+                if (!layer.setStyle) {
+                    continue;
+                }
+                if (isMatch) {
+                    layer.setStyle({weight: 8, opacity: 1.0});
+                    if (layer.openPopup) layer.openPopup();
+                }
+            }
+        }
+
+        function focusIntersection(intersectionId) {
+            var bounds = [];
+            for (var key in infrastructureLayers) {
+                if (key.indexOf('id:' + intersectionId + '_') !== 0) {
+                    continue;
+                }
+                var layer = infrastructureLayers[key];
+                if (layer.getBounds) {
+                    var layerBounds = layer.getBounds();
+                    if (layerBounds.isValid()) {
+                        bounds.push([layerBounds.getSouth(), layerBounds.getWest()]);
+                        bounds.push([layerBounds.getNorth(), layerBounds.getEast()]);
+                    }
+                } else if (layer.getLatLng) {
+                    var latLng = layer.getLatLng();
+                    bounds.push([latLng.lat, latLng.lng]);
+                }
+            }
+            if (bounds.length > 0) {
+                map.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 });
             }
         }
 
@@ -1347,11 +1449,12 @@ class MapWidget(QWebEngineView):
                 overlay_weight = overlay.get("weight", 3)
                 overlay_opacity = overlay.get("opacity", 0.85)
                 overlay_dash = _js_escape(str(overlay.get("dashArray", "8 6")))
+                overlay_tooltip = _js_escape(str(overlay.get("tooltip", "")))
                 self._run_js(
                     "addInfrastructurePolyline("
                     f"'{overlay_id}', {coords_js}, '{overlay_color}', '{overlay_popup}', "
                     f"'{_js_escape(str(overlay['layer']))}', {overlay_weight}, {overlay_opacity}, "
-                    f"'{overlay_dash}')"
+                    f"'{overlay_dash}', '{overlay_tooltip}')"
                 )
             elif overlay["kind"] == "label":
                 self._run_js(
@@ -1388,6 +1491,14 @@ class MapWidget(QWebEngineView):
         self._run_js(f"highlightMarker('{marker_id}')")
         if self._follow_station_id and msg.station_id == self._follow_station_id:
             self._run_js(f"followMarker('{_js_escape(marker_id)}')")
+
+    def highlight_request(self, intersection_id: int, request_id: int, sequence_number: int) -> None:
+        """Highlight a rendered prioritization request route."""
+        self._run_js(f"highlightRequest({intersection_id}, {request_id}, {sequence_number})")
+
+    def focus_intersection(self, intersection_id: int) -> None:
+        """Focus the map around one rendered intersection."""
+        self._run_js(f"focusIntersection({intersection_id})")
 
     def clear(self) -> None:
         """Remove all markers and trajectories from the map."""

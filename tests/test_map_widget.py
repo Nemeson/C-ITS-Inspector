@@ -188,7 +188,10 @@ def test_infrastructure_overlays_create_spat_label_and_phase_color():
                         {
                             "signalGroup": 5,
                             "stateTimeSpeed": [
-                                {"eventState": "stop-And-Remain"},
+                                {
+                                    "eventState": "stop-And-Remain",
+                                    "timing": {"likelyTime": 42, "timeConfidence": "high"},
+                                },
                             ],
                         }
                     ],
@@ -260,7 +263,10 @@ def test_infrastructure_overlays_for_messages_colors_connection_by_matching_spat
                         {
                             "signalGroup": 5,
                             "stateTimeSpeed": [
-                                {"eventState": "stop-And-Remain"},
+                                {
+                                    "eventState": "stop-And-Remain",
+                                    "timing": {"likelyTime": 42, "timeConfidence": "high"},
+                                },
                             ],
                         }
                     ],
@@ -290,6 +296,8 @@ def test_infrastructure_overlays_for_messages_colors_connection_by_matching_spat
     assert connection_overlay["color"] == "#dc2626"
     assert "SG 5" in connection_overlay["popup"]
     assert "stop-And-Remain" in connection_overlay["popup"]
+    assert "MovementState: stop-And-Remain" in connection_overlay["tooltip"]
+    assert "likelyTime: 42" in connection_overlay["tooltip"]
     assert "inbound" in lane_label["text"]
 
 
@@ -475,6 +483,9 @@ def test_leaflet_html_exposes_layer_toggles_and_label_renderer():
     assert "Stoplines" in LEAFLET_HTML
     assert "SPAT-Punkte" in LEAFLET_HTML
     assert "addInfrastructureLabel" in LEAFLET_HTML
+    assert "bindTooltip" in LEAFLET_HTML
+    assert "highlightRequest" in LEAFLET_HTML
+    assert "focusIntersection" in LEAFLET_HTML
     assert "qrc:///qtwebchannel/qwebchannel.js" in LEAFLET_HTML
     assert "typeof QWebChannel !== 'undefined'" in LEAFLET_HTML
     assert "map.invalidateSize(false)" in LEAFLET_HTML

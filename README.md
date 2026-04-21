@@ -2,8 +2,8 @@
 
 Desktop-Anwendung zur Analyse, Wiedergabe und Kartendarstellung von V2X-Nachrichten aus PCAP-Dateien.
 
-Stand: 2026-04-19  
-Aktueller dokumentierter Funktionsstand: v1.4
+Stand: 2026-04-21  
+Aktueller dokumentierter Funktionsstand: v1.6
 
 ## Uebersicht
 
@@ -33,6 +33,11 @@ Unterstuetzte Nachrichtentypen:
 - Szenen-Aggregation fuer MAP/SPAT/SREM/SSEM
 - 30s-Phasenprognose und Request-Korrelation
 - Clock-Skew- und ETA-Verifikation
+- TXA/RXA-Soft-Merge mit kanonischer Sicht
+- Priorisierungsfehler-Panel fuer SREM/SSEM
+- Problemstellen-Replay
+- CSV/JSON-Export der Priorisierungsfehler inklusive TXA/RXA-Provenance
+- JSON-Analyse-Report fuer Issue-Verteilung, Kreuzungen und Source-Rollen
 
 ## Karten- und Playback-Stand
 
@@ -46,6 +51,10 @@ Die Kartenlogik ist inzwischen deutlich ueber Marker und einfache Trajektorien h
 - SRM/SSEM werden als Priorisierungs-Overlays auf Inbound-Lane, Outbound-Lane und Connection dargestellt
 - Dominante und sekundaere Priorisierungen werden unterschiedlich stark visualisiert
 - Mehrere Requests auf derselben Connection werden seitlich entzerrt
+- MAP-/SPAT-Punktlayer sind standardmaessig deaktiviert
+- SSEM/SSM erzeugt keine Punktmarker oder Trajektorien
+- Connections zeigen per Mouseover den aktiven MovementState und Timing-Felder
+- Timeouts werden nicht als Kartenroute dargestellt, sondern im Fehlerpanel gelistet
 
 Playback-Verhalten:
 
@@ -69,6 +78,16 @@ Die rechte Arbeitsleiste ist jetzt in zwei Ebenen organisiert:
 - darunter als Tabs:
   - `Details` fuer Nachrichten-, PKI- und Identitaetshinweise
   - `Szene` fuer Kreuzungszustand, Phasenprognose, Requests und Warnungen
+  - `ETA Analyse` fuer request-zentrierte ETA-, Speed- und SSEM-Statusbaender
+
+Rechts neben der Karte befindet sich das Panel `Priorisierungsfehler`. Es zeigt
+aktuelle Timeouts, Rejected, Late Granted, ETA-Konflikte und weitere
+Priorisierungsprobleme. Klick auf einen Eintrag synchronisiert Karte,
+Nachrichtentabelle, Detailansicht und ETA-Analyse.
+
+Das Panel bietet Filter fuer `Alle`, `Nur kritisch`, `Aktuelle Kreuzung` und eine
+Kreuzungsauswahl. Kritische Fehler koennen dadurch gezielt pro Intersection
+isoliert werden, ohne die Karte mit zusaetzlichen Markern zu ueberladen.
 
 Das Szenenpanel zeigt derzeit:
 
@@ -79,6 +98,10 @@ Das Szenenpanel zeigt derzeit:
 - operative Request-Zustaende: `pending`, `acknowledged`, `granted`, `rejected`, `timeout`
 - Inline-Warnungen bei fehlender MAP-Basis, Revisionsmismatch, Timeout und Clock Skew
 - Kennzahlen wie `Msgs/s` und mittlere ETA-Abweichung
+
+Die Playback-Leiste enthaelt zusaetzlich `Nur Problemstellen`, `Fehler zurueck`
+und `Naechster Fehler`. Damit springt die Wiedergabe nur zwischen Zeitpunkten,
+an denen ein Priorisierungsproblem erstmals erkannt wird.
 
 ## Architektur
 
@@ -108,6 +131,12 @@ Das Szenenpanel zeigt derzeit:
 - `RequestVisualState`
 - `SceneSnapshot`
 - `EtaVerification`
+- `PrioritizationIssue`
+- `PrioritizationIssueOccurrence`
+
+Die Issue-Historie wird zentral berechnet und fuer unveraenderte Message-Listen
+gecacht. Problemstellen-Replay und Export nutzen dadurch dieselben
+Erstauftretenszeitpunkte.
 
 ### Security / PKI
 
@@ -210,12 +239,28 @@ py pcap2kml_player\main.py
 - Dateinamen werden fuer Windows sicher bereinigt
 - Kollisionen nach Sanitizing werden automatisch aufgeloest
 - Exportierte Dokumente enthalten die verwendeten ASN.1-Schemaversionen
+- `Fehler exportieren` schreibt die Priorisierungsfehler als CSV und JSON:
+  - `prioritization_issues.csv`
+  - `prioritization_issues.json`
+  - `prioritization_report.json`
+- Die Issue-Zeilen enthalten `source_roles`, `source_files`, `merge_group_id` und
+  `merge_confidence`
+- Der Report fasst `issues_by_type`, `issues_by_severity`,
+  `issues_by_intersection`, `source_roles` und die mittlere Late-Grant-Latenz
+  zusammen
+
+## Weiterfuehrende Dokumentation
+
+- [SREM/SSEM-Priorisierungsanalyse](docs/prioritization_analysis.md)
+- [ETA-Analyse](docs/eta_analysis.md)
+- [TXA/RXA-PCAP-Merge](docs/pcap_merge.md)
+- [Kartenlayer und UI-Verhalten](docs/ui_map_layers.md)
 
 ## Test- und Qualitaetsstand
 
 Die aktuelle Testsuite deckt Parser, Kartenlogik, Playback, Export, Sicherheitsparser und Szenenmodell breit ab.
 
-- Aktueller Stand: `142 passed`
+- Aktueller Stand: `179 passed`
 - Vorhandene Testbereiche:
   - App-Memory
   - ASN.1-Schema-Update
@@ -234,7 +279,7 @@ Direkte GUI-Interaktionstests fuer die komplette `main_window.py` sind weiterhin
 ## Bekannte Grenzen
 
 - Kein vollstaendiger PKI-Chain-Validator
-- Noch kein CSV-, GeoJSON- oder GPX-Export
+- Noch kein GeoJSON- oder GPX-Export
 - Noch keine Offline-Karten
 - Keine vollwertige Frame-fuer-Frame-Navigation
 - Keine Headless-CLI

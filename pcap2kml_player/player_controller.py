@@ -32,6 +32,8 @@ class PlayerController(QObject):
         self._speed = 1.0
         self._state = "stopped"
         self._playback_time_seconds = 0.0
+        self._focus_indices: list[int] = []
+        self._focus_replay_enabled = False
 
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_INTERVAL_MS)
@@ -60,6 +62,8 @@ class PlayerController(QObject):
         self._messages = list(session.messages)
         self._current_index = 0
         self._playback_time_seconds = 0.0
+        self._focus_indices = []
+        self._focus_replay_enabled = False
         if self._messages:
             self.duration_changed.emit(session.duration_seconds)
 
@@ -70,6 +74,9 @@ class PlayerController(QObject):
         self._messages = messages
         self._current_index = 0
         self._playback_time_seconds = 0.0
+        self._focus_indices = [
+            index for index in self._focus_indices if index < len(self._messages)
+        ]
         if self._messages:
             duration = (
                 self._messages[-1].timestamp - self._messages[0].timestamp
@@ -85,6 +92,14 @@ class PlayerController(QObject):
         if self._current_index >= len(self._messages):
             self._current_index = 0
             self._playback_time_seconds = 0.0
+        if self._focus_replay_enabled:
+            focus_index = self._next_focus_index(self._current_index, include_current=True)
+            if focus_index is None:
+                return
+            self._current_index = focus_index
+            self._playback_time_seconds = (
+                self._messages[focus_index].timestamp - self._messages[0].timestamp
+            ).total_seconds()
         self._state = "playing"
         self._timer.start()
         self.tick.emit(self._messages[self._current_index])
@@ -116,6 +131,36 @@ class PlayerController(QObject):
         """Set playback speed multiplier."""
         self._speed = speed
 
+    def set_focus_indices(self, indices: list[int]) -> None:
+        """Set sorted playback indices used by problem-only replay."""
+        self._focus_indices = sorted(
+            {index for index in indices if 0 <= index < len(self._messages)}
+        )
+
+    def set_focus_replay_enabled(self, enabled: bool) -> None:
+        """Enable or disable problem-only replay."""
+        self._focus_replay_enabled = enabled
+
+    def focus_replay_enabled(self) -> bool:
+        """Return whether problem-only replay is enabled."""
+        return self._focus_replay_enabled
+
+    def seek_to_next_focus(self) -> None:
+        """Jump to the next focus index, wrapping at the end."""
+        next_index = self._next_focus_index(self._current_index, include_current=False)
+        if next_index is None and self._focus_indices:
+            next_index = self._focus_indices[0]
+        if next_index is not None:
+            self.seek_to_index(next_index)
+
+    def seek_to_previous_focus(self) -> None:
+        """Jump to the previous focus index, wrapping at the beginning."""
+        previous = [index for index in self._focus_indices if index < self._current_index]
+        if previous:
+            self.seek_to_index(previous[-1])
+        elif self._focus_indices:
+            self.seek_to_index(self._focus_indices[-1])
+
     def seek_to_index(self, index: int) -> None:
         """Jump to a specific message index."""
         if 0 <= index < len(self._messages):
@@ -144,6 +189,22 @@ class PlayerController(QObject):
         previous_index = self._current_index
         self._playback_time_seconds += (TICK_INTERVAL_MS / 1000.0) * self._speed
 
+        if self._focus_replay_enabled:
+            next_focus = self._next_focus_index(self._current_index, include_current=False)
+            if next_focus is None:
+                self.pause()
+                return
+            next_offset = (
+                self._messages[next_focus].timestamp - self._messages[0].timestamp
+            ).total_seconds()
+            if next_offset <= self._playback_time_seconds:
+                self._current_index = next_focus
+                current_msg = self._messages[self._current_index]
+                self.tick.emit(current_msg)
+                self.position_changed.emit(self._current_index)
+            self.time_updated.emit(self._playback_time_seconds)
+            return
+
         while self._current_index + 1 < len(self._messages):
             next_msg = self._messages[self._current_index + 1]
             next_offset = (
@@ -161,6 +222,15 @@ class PlayerController(QObject):
 
         if self._current_index >= len(self._messages) - 1:
             self.pause()
+
+    def _next_focus_index(self, index: int, *, include_current: bool) -> Optional[int]:
+        """Return the next configured focus index."""
+        if not self._focus_indices:
+            return None
+        for focus_index in self._focus_indices:
+            if focus_index > index or (include_current and focus_index == index):
+                return focus_index
+        return None
 
     def format_time(self, seconds: float) -> str:
         """Format seconds as MM:SS.s."""

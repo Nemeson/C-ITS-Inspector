@@ -99,3 +99,50 @@ def test_play_emits_position_and_time_for_initial_state() -> None:
 
     assert positions[-1] == 0
     assert times[-1] == 0.0
+
+
+def test_focus_replay_play_starts_at_first_focus_index() -> None:
+    base = datetime(2025, 8, 22, 12, 0, 0)
+    session = SessionData(
+        messages=[
+            _message(base),
+            _message(base + timedelta(seconds=1)),
+            _message(base + timedelta(seconds=2)),
+        ]
+    )
+
+    controller = PlayerController()
+    controller.set_session(session)
+    controller.set_focus_indices([1, 2])
+    controller.set_focus_replay_enabled(True)
+    controller.play()
+
+    assert controller.current_index == 1
+    assert controller.get_current_playback_time() == 1.0
+
+
+def test_focus_replay_next_and_previous_wrap() -> None:
+    base = datetime(2025, 8, 22, 12, 0, 0)
+    session = SessionData(
+        messages=[
+            _message(base),
+            _message(base + timedelta(seconds=1)),
+            _message(base + timedelta(seconds=2)),
+        ]
+    )
+
+    controller = PlayerController()
+    controller.set_session(session)
+    controller.set_focus_indices([1, 2])
+
+    controller.seek_to_next_focus()
+    assert controller.current_index == 1
+
+    controller.seek_to_next_focus()
+    assert controller.current_index == 2
+
+    controller.seek_to_next_focus()
+    assert controller.current_index == 1
+
+    controller.seek_to_previous_focus()
+    assert controller.current_index == 2
