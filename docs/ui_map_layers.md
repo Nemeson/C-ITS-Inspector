@@ -239,3 +239,9 @@ direkt in das HTML eingebettet. Das vermeidet QtWebEngine-Probleme mit relativen
 `file://`-Skriptpfaden auf einzelnen Windows-Rechnern. Wenn Leaflet trotzdem
 nicht initialisiert werden kann, zeigt der Kartenbereich eine sichtbare Meldung
 und die Python-UI erfasst den Fehler im Karten-Safe-Mode bzw. Diagnosebericht.
+
+Zusätzlich startet QtWebEngine standardmaessig mit Software-Rendering. Das ist
+auf Notebooks und Remote-/Docking-Setups robuster als GPU-Compositing, weil
+Chromium/Qt sonst je nach Treiber eine graue WebEngine-Flaeche anzeigen kann.
+GPU-Rendering kann fuer Vergleichstests mit `PCAP2KML_ENABLE_GPU=1` wieder
+aktiviert werden.

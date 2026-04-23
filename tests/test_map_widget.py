@@ -565,7 +565,8 @@ def test_run_js_queues_until_map_page_is_loaded():
     widget._on_load_finished(True)
 
     assert widget._pending_scripts == []
-    assert fake_page.scripts == ["first()"]
+    assert fake_page.scripts[-1] == "first()"
+    assert "typeof L !== 'undefined'" in fake_page.scripts[0]
 
 
 def test_run_js_coalesces_render_payloads_while_previous_payload_is_active():

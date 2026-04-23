@@ -350,11 +350,19 @@ DirectComposition-/HDR-/Video-Overlay-Pfade:
 
 Damit bleibt normale GPU-Beschleunigung fuer die Karte moeglich, waehrend der
 problematische D3D11/HDR-Pfad nicht mehr verwendet werden soll. Falls Karte
-oder WebEngine auf einem Rechner trotzdem instabil laufen, kann zusaetzlich
-Software-Rendering erzwungen werden:
+oder WebEngine auf einem Rechner trotzdem instabil laufen, startet die App
+inzwischen standardmaessig mit Software-Rendering:
 
 ```powershell
 $env:PCAP2KML_DISABLE_GPU="1"
+py pcap2kml_launcher.py
+```
+
+Fuer gezielte Tests auf stabilen Rechnern kann GPU-Rendering wieder aktiviert
+werden:
+
+```powershell
+$env:PCAP2KML_ENABLE_GPU="1"
 py pcap2kml_launcher.py
 ```
 
@@ -446,7 +454,7 @@ damit die lokalen Leaflet-Dateien auch in der EXE verfuegbar sind.
 
 Die aktuelle Testsuite deckt Parser, Kartenlogik, Playback, Export, Sicherheitsparser und Szenenmodell breit ab.
 
-- Aktueller Stand: `210 passed`
+- Aktueller Stand: `212 passed`
 - Vorhandene Testbereiche:
   - App-Memory
   - ASN.1-Schema-Update

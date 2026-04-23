@@ -5,9 +5,12 @@ import os
 from pcap2kml_player.qt_runtime import configure_qt_runtime_environment
 
 
-def test_configure_qt_runtime_adds_directcomposition_mitigation(monkeypatch):
+def test_configure_qt_runtime_adds_directcomposition_mitigation_and_software_default(monkeypatch):
     monkeypatch.delenv("QTWEBENGINE_CHROMIUM_FLAGS", raising=False)
     monkeypatch.delenv("PCAP2KML_DISABLE_GPU", raising=False)
+    monkeypatch.delenv("PCAP2KML_ENABLE_GPU", raising=False)
+    monkeypatch.delenv("QT_OPENGL", raising=False)
+    monkeypatch.delenv("QT_QUICK_BACKEND", raising=False)
 
     configure_qt_runtime_environment()
 
@@ -20,12 +23,17 @@ def test_configure_qt_runtime_adds_directcomposition_mitigation(monkeypatch):
     assert "--disable-accelerated-video-decode" in chromium_flags
     assert "--disable-gpu-memory-buffer-video-frames" in chromium_flags
     assert "--force-color-profile=srgb" in chromium_flags
-    assert "--disable-gpu" not in chromium_flags
+    assert "--disable-gpu" in chromium_flags
+    assert "--disable-gpu-compositing" in chromium_flags
+    assert os.environ["QT_OPENGL"] == "software"
+    assert os.environ["QT_QUICK_BACKEND"] == "software"
 
 
 def test_configure_qt_runtime_can_force_software_rendering(monkeypatch):
     monkeypatch.delenv("QTWEBENGINE_CHROMIUM_FLAGS", raising=False)
     monkeypatch.delenv("QT_OPENGL", raising=False)
+    monkeypatch.delenv("QT_QUICK_BACKEND", raising=False)
+    monkeypatch.delenv("PCAP2KML_ENABLE_GPU", raising=False)
     monkeypatch.setenv("PCAP2KML_DISABLE_GPU", "1")
 
     configure_qt_runtime_environment()
@@ -34,11 +42,28 @@ def test_configure_qt_runtime_can_force_software_rendering(monkeypatch):
     assert "--disable-gpu" in chromium_flags
     assert "--disable-gpu-compositing" in chromium_flags
     assert os.environ["QT_OPENGL"] == "software"
+    assert os.environ["QT_QUICK_BACKEND"] == "software"
+
+
+def test_configure_qt_runtime_can_opt_into_gpu(monkeypatch):
+    monkeypatch.delenv("QTWEBENGINE_CHROMIUM_FLAGS", raising=False)
+    monkeypatch.delenv("QT_OPENGL", raising=False)
+    monkeypatch.delenv("QT_QUICK_BACKEND", raising=False)
+    monkeypatch.delenv("PCAP2KML_DISABLE_GPU", raising=False)
+    monkeypatch.setenv("PCAP2KML_ENABLE_GPU", "1")
+
+    configure_qt_runtime_environment()
+
+    chromium_flags = set(os.environ["QTWEBENGINE_CHROMIUM_FLAGS"].split())
+    assert "--disable-direct-composition" in chromium_flags
+    assert "--disable-gpu" not in chromium_flags
+    assert "QT_OPENGL" not in os.environ
 
 
 def test_configure_qt_runtime_preserves_existing_flags(monkeypatch):
     monkeypatch.setenv("QTWEBENGINE_CHROMIUM_FLAGS", "--existing-flag")
     monkeypatch.delenv("PCAP2KML_DISABLE_GPU", raising=False)
+    monkeypatch.delenv("PCAP2KML_ENABLE_GPU", raising=False)
 
     configure_qt_runtime_environment()
     configure_qt_runtime_environment()
