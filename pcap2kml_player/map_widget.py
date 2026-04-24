@@ -56,6 +56,7 @@ MAP_RENDER_BUDGETS = {
     },
 }
 MAP_RENDER_STALL_SECONDS = 8.0
+MAP_BOOTSTRAP_TIMEOUT_SECONDS = 6.0
 
 # Color palette for station markers (hex strings for Leaflet)
 STATION_PALETTE = [
@@ -1682,13 +1683,18 @@ class MapWidget(QWebEngineView):
         self._queued_render_payload_script: Optional[str] = None
         self._render_payload_started_at: Optional[float] = None
         self._render_payload_stall_generation = 0
+        self._bootstrap_generation = 0
+        self._bootstrap_probe_succeeded = False
         self._latest_telemetry: Optional[MapRenderTelemetry] = None
         self._last_payload_was_replaced = False
 
         self._bridge.message_clicked.connect(self._on_marker_clicked)
         self.loadFinished.connect(self._on_load_finished)
+        self._diagnostic_page.renderProcessTerminated.connect(self._on_render_process_terminated)
 
+        logger.info("Map backend created: webengine")
         self.setHtml(_leaflet_runtime_html(), QUrl.fromLocalFile(str(_asset_base_path()) + "/"))
+        self._schedule_bootstrap_timeout()
 
     def _get_station_color(self, station_id: str) -> str:
         """Assign a color to a station ID, creating a new one if needed."""
@@ -1719,11 +1725,13 @@ class MapWidget(QWebEngineView):
     def reload_map_page(self) -> None:
         """Reload the embedded Leaflet page and drop pending JavaScript work."""
         self._page_ready = False
+        self._bootstrap_probe_succeeded = False
         self._pending_scripts = []
         self._render_payload_in_flight = False
         self._queued_render_payload_script = None
         self._render_payload_started_at = None
         self.setHtml(_leaflet_runtime_html(), QUrl.fromLocalFile(str(_asset_base_path()) + "/"))
+        self._schedule_bootstrap_timeout()
 
     def load_messages(self, messages: list[V2xMessage]) -> None:
         """Load all messages onto the map: markers, trajectories, and overlays."""
@@ -2032,13 +2040,15 @@ class MapWidget(QWebEngineView):
     def _on_load_finished(self, ok: bool) -> None:
         """Flush queued JavaScript once the embedded map page is ready."""
         self._page_ready = ok
+        self._bootstrap_probe_succeeded = False
         self._render_payload_in_flight = False
         self._queued_render_payload_script = None
         self._render_payload_started_at = None
         if not ok:
             logger.warning("Leaflet map page did not finish loading")
-            self.map_issue_detected.emit("Karten-WebView konnte nicht geladen werden")
+            self._emit_map_issue("Karten-WebView konnte nicht geladen werden")
             return
+        logger.info("WebEngine loadFinished(ok=True) — starting Leaflet bootstrap probe")
         self._execute_js(
             "typeof L !== 'undefined' && typeof map !== 'undefined'",
             self._on_bootstrap_probe_finished,
@@ -2050,8 +2060,89 @@ class MapWidget(QWebEngineView):
 
     def _on_bootstrap_probe_finished(self, result=None) -> None:
         """Report a visible issue if the page loaded but Leaflet did not bootstrap."""
-        if result is False:
-            self.map_issue_detected.emit("Leaflet wurde geladen, aber die Karte wurde nicht initialisiert")
+        if result is True:
+            self._bootstrap_probe_succeeded = True
+            logger.info("Leaflet bootstrap probe succeeded — scheduling visual render check")
+            QTimer.singleShot(2500, self._check_visual_render)
+        elif result is False:
+            logger.warning("Leaflet bootstrap probe returned False — map not initialised")
+            self._emit_map_issue("Leaflet wurde geladen, aber die Karte wurde nicht initialisiert")
+        else:
+            logger.warning("Leaflet bootstrap probe returned %r — treating as failure", result)
+            self._emit_map_issue("Leaflet-Bootstrap konnte nicht verifiziert werden")
+
+    def _schedule_bootstrap_timeout(self) -> None:
+        """Detect WebEngine pages that never finish because Chromium lost its GL context."""
+        generation = int(self.__dict__.get("_bootstrap_generation", 0)) + 1
+        self._bootstrap_generation = generation
+        QTimer.singleShot(
+            int(MAP_BOOTSTRAP_TIMEOUT_SECONDS * 1000),
+            lambda: self._check_bootstrap_timeout(generation),
+        )
+
+    def _check_bootstrap_timeout(self, generation: int) -> None:
+        """Report a startup issue when Leaflet never becomes ready."""
+        if generation != self.__dict__.get("_bootstrap_generation", 0):
+            logger.debug("Bootstrap timeout ignored: stale generation %d", generation)
+            return
+        if self.__dict__.get("_bootstrap_probe_succeeded", False):
+            logger.debug("Bootstrap timeout suppressed: probe already succeeded")
+            return
+        logger.warning(
+            "Bootstrap timeout fired after %.0fs — Leaflet probe never succeeded (page_ready=%s)",
+            MAP_BOOTSTRAP_TIMEOUT_SECONDS,
+            self.__dict__.get("_page_ready", False),
+        )
+        self._emit_map_issue(
+            f"Karten-WebView Initialisierungstimeout nach {MAP_BOOTSTRAP_TIMEOUT_SECONDS:.0f}s"
+        )
+
+    def _on_render_process_terminated(self, termination_status, exit_code: int) -> None:
+        """Handle Chromium render process crash or abnormal exit."""
+        logger.error(
+            "WebEngine render process terminated: status=%s exit_code=%d",
+            termination_status,
+            exit_code,
+        )
+        self._bootstrap_probe_succeeded = False
+        self._page_ready = False
+        self._emit_map_issue(
+            f"WebEngine Render-Prozess beendet (Status={termination_status}, Code={exit_code})"
+        )
+
+    def _check_visual_render(self) -> None:
+        """Detect a blank WebEngine surface despite Leaflet claiming success.
+
+        When Chromium's GPU/Viz compositor fails to create GL contexts
+        (kFatalFailure), loadFinished fires and JS executes normally, but no
+        frame ever reaches the screen.  grab() captures what is visually
+        on-screen; a working Leaflet map has zoom controls, attribution, and
+        map-tile backgrounds — always more than 4 distinct RGB values.
+        """
+        if not self.__dict__.get("_bootstrap_probe_succeeded", False):
+            return
+        pixmap = self.grab()
+        if pixmap.isNull() or pixmap.width() < 40 or pixmap.height() < 40:
+            logger.debug("Visual render check skipped: widget too small or null (%dx%d)", pixmap.width(), pixmap.height())
+            return
+        image = pixmap.toImage()
+        w, h = image.width(), image.height()
+        step = max(5, min(w, h) // 10)
+        colors: set[int] = set()
+        for x in range(step, w - step, step):
+            for y in range(step, h - step, step):
+                colors.add(image.pixel(x, y) & 0x00FFFFFF)
+        unique = len(colors)
+        logger.info("Visual render check: %d distinct RGB values sampled (widget %dx%d)", unique, w, h)
+        if unique < 4:
+            logger.warning(
+                "Visual render check: only %d distinct colors — WebEngine surface is blank, triggering native fallback",
+                unique,
+            )
+            self._bootstrap_probe_succeeded = False
+            self._emit_map_issue(
+                "WebEngine Leinwand leer nach Bootstrap — GL-Compositor nicht verfügbar"
+            )
 
     def _run_js(self, script: str) -> None:
         """Execute JavaScript in the web page."""
@@ -2111,14 +2202,21 @@ class MapWidget(QWebEngineView):
         if not self.__dict__.get("_render_payload_in_flight", False) or started_at is None:
             return
         if time.monotonic() - started_at >= MAP_RENDER_STALL_SECONDS:
-            self.map_issue_detected.emit(
+            self._emit_map_issue(
                 f"Karten-Renderpayload laeuft seit mehr als {MAP_RENDER_STALL_SECONDS:.0f}s"
             )
 
     def _on_java_script_issue(self, message: str) -> None:
         """Forward JavaScript errors from the map page to the main window."""
         logger.warning("Map JavaScript issue: %s", message)
-        self.map_issue_detected.emit(message)
+        self._emit_map_issue(message)
+
+    def _emit_map_issue(self, message: str) -> None:
+        """Emit a map issue, tolerating tests that bypass Qt base initialization."""
+        try:
+            self.map_issue_detected.emit(message)
+        except RuntimeError:
+            pass
 
     def _mark_latest_telemetry_replaced(self) -> None:
         """Mark the newest telemetry entry as coalesced by the render queue."""

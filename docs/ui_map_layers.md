@@ -252,3 +252,32 @@ ANGLE-SwiftShader-Erzwingen. GPU-Rendering kann fuer Vergleichstests mit
 `QT_OPENGL_DLL` inzwischen explizit aus, damit bei Problemrechnern sofort
 sichtbar ist, ob wirklich die mit PyQt6 ausgelieferte `opengl32sw.dll`
 verwendet wird.
+
+Wenn QtWebEngine auch mit dieser Konfiguration keinen GLES-Kontext erzeugen
+kann, kann in der Toolbar `Karte: Native` der native Qt-Kartenbackend gewaehlt
+werden. Dieser Backend verwendet `QGraphicsView` statt Leaflet und rendert
+Marker, Trajektorien und einfache Infrastruktur direkt in Qt. Dadurch fehlen
+Online-Kartenkacheln und Basiskartenumschaltung, aber die Analyse bleibt auf
+betroffenen Notebooks bedienbar. Fuer gezielte Vergleiche kann der Backend auch
+ueber `PCAP2KML_MAP_BACKEND=native` oder `PCAP2KML_MAP_BACKEND=webengine`
+festgelegt werden. Der Diagnosebericht enthaelt den konkret aktiven
+Backend-Namen sowie `QT_OPENGL`, `QT_OPENGL_DLL` und die aktiven
+Chromium-Flags.
+
+**Automatischer Fallback-Mechanismus**
+
+Nach `loadFinished` startet ein JavaScript-Probe (`typeof L !== 'undefined' &&
+typeof map !== 'undefined'`). Nur wenn dieser Probe `true` zurueckgibt, gilt der
+Bootstrap als erfolgreich (`_bootstrap_probe_succeeded = True`). Ein paralleler
+6-Sekunden-Timer prueft *dieses Flag* — nicht `loadFinished` — und loest bei
+Nichterfuellung einen `map_issue_detected`-Event aus. Das verhindert das
+Szenario, bei dem `loadFinished(ok=True)` trotz defektem GL-Kontext feuert und
+den Timer faelschlicherweise abwuergt.
+
+Zusaetzlich ist das `renderProcessTerminated`-Signal des `QWebEnginePage`
+verbunden. Ein Chromium-Absturz setzt `_bootstrap_probe_succeeded = False` und
+loest ebenfalls einen Fallback aus.
+
+`_on_map_issue_detected` erkennt fatale Fehlerkategorien (u.a. `"Karten-WebView"`,
+`"Leaflet"`, `"WebEngine"`, `"Render-Prozess"`) und ruft `_replace_map_widget`
+mit `persist=False` auf, damit der naechste App-Start wieder Leaflet versucht.

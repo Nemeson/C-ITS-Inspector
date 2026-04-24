@@ -579,6 +579,40 @@ def test_bootstrap_probe_false_emits_map_issue():
     assert issues == ["Leaflet wurde geladen, aber die Karte wurde nicht initialisiert"]
 
 
+def test_bootstrap_probe_none_emits_verification_issue():
+    widget = MapWidget.__new__(MapWidget)
+    issues: list[str] = []
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
+
+    widget._on_bootstrap_probe_finished(None)
+
+    assert issues == ["Leaflet-Bootstrap konnte nicht verifiziert werden"]
+
+
+def test_bootstrap_timeout_emits_map_issue():
+    widget = MapWidget.__new__(MapWidget)
+    widget._bootstrap_generation = 3
+    widget._page_ready = False
+    issues: list[str] = []
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
+
+    widget._check_bootstrap_timeout(3)
+
+    assert issues == ["Karten-WebView Initialisierungstimeout nach 6s"]
+
+
+def test_bootstrap_timeout_ignores_stale_generation():
+    widget = MapWidget.__new__(MapWidget)
+    widget._bootstrap_generation = 4
+    widget._page_ready = False
+    issues: list[str] = []
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
+
+    widget._check_bootstrap_timeout(3)
+
+    assert issues == []
+
+
 def test_load_finished_false_emits_map_load_issue():
     widget = MapWidget.__new__(MapWidget)
     widget._pending_scripts = []
@@ -1099,3 +1133,62 @@ def test_leaflet_html_exposes_incremental_sync_helpers():
     assert "syncMarkers(activeIds)" in LEAFLET_HTML
     assert "syncTrajectories(activeIds)" in LEAFLET_HTML
     assert "syncInfrastructure(activeIds)" in LEAFLET_HTML
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap probe / timeout regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_bootstrap_timeout_fires_even_when_page_loaded():
+    """Regression: loadFinished(ok=True) must NOT silence the timeout when the
+    Leaflet probe never confirmed success (_bootstrap_probe_succeeded=False)."""
+    widget = MapWidget.__new__(MapWidget)
+    widget._bootstrap_generation = 1
+    widget._page_ready = True          # simulates loadFinished(ok=True) having fired
+    widget._bootstrap_probe_succeeded = False  # probe never returned True
+    issues: list[str] = []
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
+
+    widget._check_bootstrap_timeout(1)
+
+    assert issues == ["Karten-WebView Initialisierungstimeout nach 6s"]
+
+
+def test_bootstrap_timeout_silent_after_probe_succeeded():
+    """Timeout must not fire when the bootstrap probe already confirmed success."""
+    widget = MapWidget.__new__(MapWidget)
+    widget._bootstrap_generation = 1
+    widget._bootstrap_probe_succeeded = True
+    issues: list[str] = []
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
+
+    widget._check_bootstrap_timeout(1)
+
+    assert issues == []
+
+
+def test_bootstrap_probe_true_sets_succeeded_flag():
+    """A True probe result must set _bootstrap_probe_succeeded so the timeout is suppressed."""
+    widget = MapWidget.__new__(MapWidget)
+    widget._bootstrap_probe_succeeded = False
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: None})()
+
+    widget._on_bootstrap_probe_finished(True)
+
+    assert widget._bootstrap_probe_succeeded is True
+
+
+def test_render_process_terminated_emits_map_issue():
+    """Chromium render-process termination must emit a map_issue with 'Render-Prozess'."""
+    widget = MapWidget.__new__(MapWidget)
+    widget._bootstrap_probe_succeeded = True
+    widget._page_ready = True
+    issues: list[str] = []
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
+
+    widget._on_render_process_terminated("NormalTerminationStatus", 0)
+
+    assert widget._bootstrap_probe_succeeded is False
+    assert widget._page_ready is False
+    assert issues and "Render-Prozess" in issues[0]

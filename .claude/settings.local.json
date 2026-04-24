@@ -6,7 +6,8 @@
       "Bash(pip show:*)",
       "Bash(tasklist)",
       "Bash(ls:*)",
-      "Bash(rtk git:*)"
+      "Bash(rtk git:*)",
+      "Bash(rtk proxy *)"
     ]
   }
 }

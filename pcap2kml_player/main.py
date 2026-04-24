@@ -21,6 +21,7 @@ from pcap2kml_player.qt_runtime import configure_qt_runtime_environment, prefer_
 
 configure_qt_runtime_environment()
 
+from pcap2kml_player.map_backend import selected_map_backend_name
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -89,8 +90,9 @@ def main() -> int:
     logger = logging.getLogger("pcap2kml")
     logger.info("Starting PCAP2KML Player")
     logger.info(
-        "Qt runtime: software=%s | QT_OPENGL=%s | QT_OPENGL_DLL=%s | QSG_RHI_PREFER_SOFTWARE_RENDERER=%s | flags=%s",
+        "Qt runtime: software=%s | map_backend=%s | QT_OPENGL=%s | QT_OPENGL_DLL=%s | QSG_RHI_PREFER_SOFTWARE_RENDERER=%s | flags=%s",
         prefer_software_rendering(),
+        selected_map_backend_name(),
         os.environ.get("QT_OPENGL", ""),
         os.environ.get("QT_OPENGL_DLL", ""),
         os.environ.get("QSG_RHI_PREFER_SOFTWARE_RENDERER", ""),
@@ -99,6 +101,7 @@ def main() -> int:
 
     if prefer_software_rendering():
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True)
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
 
     app = QApplication(sys.argv)
     app.setApplicationName("PCAP2KML Player")

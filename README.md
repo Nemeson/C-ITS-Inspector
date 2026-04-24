@@ -349,7 +349,20 @@ Software-OpenGL plus den Qt-Software-Rasterizer:
 --force-color-profile=srgb
 --disable-gpu
 --disable-gpu-compositing
+--disable-accelerated-2d-canvas
+--disable-webgl
+--disable-webgl2
+--disable-gpu-rasterization
+--disable-oop-rasterization
 ```
+
+Die letzten fuenf Flags sind entscheidend fuer Rechner, auf denen Chromiums
+GPU-Prozess `kFatalFailure: Failed to create shared context for virtualization`
+meldet. Ohne diese Flags versucht Chromium trotz `--disable-gpu` GLES-Kontexte
+fuer Canvas-2D-Beschleunigung und WebGL zu erstellen — die Kontexterstellung
+schlaegt fehl und die Karte bleibt leer. Mit `--disable-accelerated-2d-canvas`
+verwendet Chromium stattdessen CPU-basiertes Skia fuer alle Canvas-Operationen,
+was den Leaflet-Renderer auf beliebiger Hardware funktionsfaehig haelt.
 
 Ergaenzend dazu werden gesetzt:
 
@@ -360,9 +373,38 @@ QSG_RHI_PREFER_SOFTWARE_RENDERER=1
 ```
 
 Damit wird der problematische D3D11-/SceneGraph-Treiberpfad auf vielen
-Windows-Rechnern umgangen. Falls Karte oder WebEngine auf einem Rechner
-trotzdem instabil laufen, startet die App inzwischen standardmaessig mit
-Software-Rendering:
+Windows-Rechnern umgangen. Leaflet/WebEngine bleibt der Standard, damit
+Basiskarten wie OSM, Schwarz-Weiss, Dunkel und Satellit verfuegbar bleiben.
+Falls QtWebEngine trotz Software-OpenGL weiterhin keinen GLES-Kontext erstellen
+kann, erkennt die App das automatisch: Nach dem Laden der Seite prueft ein
+JavaScript-Probe, ob Leaflet tatsaechlich initialisiert wurde. Schlaegt diese
+Pruefung fehl oder laeuft sie in einen 6-Sekunden-Timeout, wechselt die App
+selbstaendig auf den nativen Backend — auch dann, wenn `loadFinished(ok=True)`
+bereits gefeuert hat (was trotz defektem GL-Kontext passiert). Ebenso loest ein
+Chromium-Render-Prozess-Absturz (`renderProcessTerminated`) sofort einen Wechsel
+aus. Dieser automatische Wechsel wird nicht dauerhaft gespeichert; der naechste
+App-Start versucht es erneut mit Leaflet. Der native Backend kann auch manuell
+ueber `Karte: Native` in der Toolbar gewaehlt werden. Er zeigt Marker,
+Trajektorien und Infrastruktur direkt in Qt ohne Leaflet-Tiles und ohne
+QtWebEngine-GPU-Compositor, damit die Analyse auf problematischen Notebooks
+weiterhin nutzbar bleibt.
+
+Der Karten-Backend kann fuer Tests auch explizit gesetzt werden:
+
+```powershell
+$env:PCAP2KML_MAP_BACKEND="native"
+py pcap2kml_launcher.py
+```
+
+Oder fuer einen Vergleich mit der Leaflet-/WebEngine-Karte:
+
+```powershell
+$env:PCAP2KML_MAP_BACKEND="webengine"
+py pcap2kml_launcher.py
+```
+
+Falls Karte oder WebEngine auf einem Rechner trotzdem instabil laufen, kann
+Software-Rendering weiterhin explizit gesetzt werden:
 
 ```powershell
 $env:PCAP2KML_DISABLE_GPU="1"
@@ -465,7 +507,7 @@ damit die lokalen Leaflet-Dateien auch in der EXE verfuegbar sind.
 
 Die aktuelle Testsuite deckt Parser, Kartenlogik, Playback, Export, Sicherheitsparser und Szenenmodell breit ab.
 
-- Aktueller Stand: `221 passed`
+- Aktueller Stand: `231 passed`
   - inklusive Runtime-/Entry-Point-Tests fuer Software-OpenGL, `QT_OPENGL_DLL`
     und den QtWebEngine-Startup-Pfad
 - Vorhandene Testbereiche:
