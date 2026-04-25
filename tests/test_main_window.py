@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pcap2kml_player.data_model import MessageType, SessionData, V2xMessage
-from pcap2kml_player.ui.eta_graph_widget import EtaDashboardData, EtaDashboardEvent
 from pcap2kml_player.scene_model import PrioritizationIssue
 from pcap2kml_player.ui import main_window as main_window_module
+from pcap2kml_player.ui.eta_graph_widget import EtaDashboardData, EtaDashboardEvent
 from pcap2kml_player.ui.main_window import (
     COL_LATLON,
     COL_MERGE,
@@ -16,19 +16,18 @@ from pcap2kml_player.ui.main_window import (
     COL_TIMESTAMP,
     MAP_BACKEND_NATIVE,
     MAP_BACKEND_WEBENGINE,
-    MainWindow,
     MAP_PLAYBACK_RENDER_INTERVAL_SECONDS,
     MEMORY_DIAGNOSTIC_THRESHOLD_MB,
-    MEMORY_SAVER_THRESHOLD_MB,
     PERFORMANCE_MODE_DIAGNOSTIC,
     PERFORMANCE_MODE_NORMAL,
     PERFORMANCE_MODE_SAVER,
+    MainWindow,
 )
 
 
 def _message(second: int, station_id: str = "car-1") -> V2xMessage:
     return V2xMessage(
-        timestamp=datetime(2026, 4, 19, 12, 0, second, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 19, 12, 0, second, tzinfo=UTC),
         station_id=station_id,
         msg_type=MessageType.CAM,
         latitude=52.0,
@@ -451,7 +450,7 @@ def test_filter_prioritization_issues_by_severity_and_intersection():
     window = MainWindow.__new__(MainWindow)
     window._issue_filter_mode = "critical"
     window._issue_filter_intersection = "42"
-    now = datetime(2026, 4, 19, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 4, 19, 12, 0, 0, tzinfo=UTC)
     issues = [
         PrioritizationIssue(
             issue_type="TIMEOUT",
@@ -519,7 +518,7 @@ def test_map_slice_render_is_throttled_even_for_priority_messages(monkeypatch):
     monkeypatch.setattr(main_window_module.time, "perf_counter", lambda: 100.2)
 
     msg = V2xMessage(
-        timestamp=datetime(2026, 4, 19, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 19, 12, 0, 1, tzinfo=UTC),
         station_id="rsu-srem",
         msg_type=MessageType.SREM,
         latitude=52.0,
@@ -716,12 +715,14 @@ def test_map_telemetry_budget_drop_reduces_to_saver_mode():
     window._statusbar = _FakeStatusBar()
     window._map_telemetry_history = []
 
-    window._on_map_telemetry_updated({
-        "budget_dropped_markers": 1,
-        "budget_dropped_infrastructure": 0,
-        "budget_dropped_trajectories": 0,
-        "budget_dropped_trajectory_points": 0,
-    })
+    window._on_map_telemetry_updated(
+        {
+            "budget_dropped_markers": 1,
+            "budget_dropped_infrastructure": 0,
+            "budget_dropped_trajectories": 0,
+            "budget_dropped_trajectory_points": 0,
+        }
+    )
 
     assert window._performance_mode == PERFORMANCE_MODE_SAVER
     assert window._map_widget.modes[-1] == PERFORMANCE_MODE_SAVER
@@ -954,7 +955,7 @@ def test_issue_panel_policy_collapses_only_without_critical_in_compact_mode():
         sequence_number=1,
         station_id="bus-1",
         message="warning",
-        timestamp=datetime(2026, 4, 19, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 19, 12, 0, 0, tzinfo=UTC),
     )
     critical = PrioritizationIssue(
         issue_type="TIMEOUT",
@@ -964,7 +965,7 @@ def test_issue_panel_policy_collapses_only_without_critical_in_compact_mode():
         sequence_number=1,
         station_id="bus-2",
         message="critical",
-        timestamp=datetime(2026, 4, 19, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 19, 12, 0, 0, tzinfo=UTC),
     )
 
     window._apply_issue_panel_policy([warning])
@@ -1013,9 +1014,7 @@ def test_render_process_issue_triggers_native_fallback(monkeypatch):
     window._map_issue_history = []
     monkeypatch.setattr(main_window_module, "create_map_widget", lambda parent=None, backend=None: new_map)
 
-    window._on_map_issue_detected(
-        "WebEngine Render-Prozess beendet (Status=NormalTerminationStatus, Code=0)"
-    )
+    window._on_map_issue_detected("WebEngine Render-Prozess beendet (Status=NormalTerminationStatus, Code=0)")
 
     assert window._map_backend == MAP_BACKEND_NATIVE
     assert "ui/map_backend" not in window._settings.values
@@ -1024,7 +1023,7 @@ def test_render_process_issue_triggers_native_fallback(monkeypatch):
 
 
 def test_build_diagnostics_report_includes_map_backend_and_opengl_env(monkeypatch):
-    import os
+
     monkeypatch.setenv("QT_OPENGL", "software")
 
     window = MainWindow.__new__(MainWindow)

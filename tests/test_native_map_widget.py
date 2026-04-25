@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pcap2kml_player.data_model import MessageType, V2xMessage
 from pcap2kml_player.native_map_widget import _native_infrastructure_overlays
@@ -8,7 +8,7 @@ from pcap2kml_player.native_map_widget import _native_infrastructure_overlays
 
 def test_native_infrastructure_overlays_include_lanes_stoplines_connections_and_requests():
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -52,7 +52,7 @@ def test_native_infrastructure_overlays_include_lanes_stoplines_connections_and_
         },
     )
     srem_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="bus-1",
         msg_type=MessageType.SREM,
         latitude=52.0,

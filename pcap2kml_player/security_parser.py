@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import struct
-from typing import Optional
 
 from .data_model import SecurityInfo
 from .protocol_constants import ITS_PDU_MESSAGE_ID
@@ -179,7 +178,7 @@ def _parse_certificate(cert_data: bytes) -> dict:
     return result
 
 
-def parse_security_header(payload: bytes) -> Optional[SecurityInfo]:
+def parse_security_header(payload: bytes) -> SecurityInfo | None:
     """Parse the ETSI TS 103 097 security envelope from a V2X payload.
 
     Tries to extract security information from signed messages.
@@ -215,9 +214,7 @@ def parse_security_header(payload: bytes) -> Optional[SecurityInfo]:
     # ─── Security Profile (Content Type) ─────────────────────
     security_profile, offset = _read_uint8(payload, offset)
 
-    profile_name = SECURITY_PROFILE_NAMES.get(
-        security_profile, f"unknown({security_profile})"
-    )
+    profile_name = SECURITY_PROFILE_NAMES.get(security_profile, f"unknown({security_profile})")
 
     # Unsecured messages have no further security data
     if security_profile == SECURITY_PROFILE_UNSECURED:
@@ -252,9 +249,7 @@ def parse_security_header(payload: bytes) -> Optional[SecurityInfo]:
     # Top 2 bits indicate signer type (0=self with signature, 1=digest, 2=chain, 3=digest+unknown)
     signer_type_bits = (signer_byte >> 6) & 0x03
 
-    info.signer_type = SIGNER_TYPE_NAMES.get(
-        signer_type_bits, f"unknown({signer_type_bits})"
-    )
+    info.signer_type = SIGNER_TYPE_NAMES.get(signer_type_bits, f"unknown({signer_type_bits})")
 
     # ─── Extract certificate digest or chain ─────────────────
     if signer_type_bits in (0, 1):
@@ -337,9 +332,7 @@ def parse_security_header(payload: bytes) -> Optional[SecurityInfo]:
     return info
 
 
-def extract_security_from_decoded(
-    decoded: dict, msg_type: str
-) -> Optional[SecurityInfo]:
+def extract_security_from_decoded(decoded: dict, msg_type: str) -> SecurityInfo | None:
     """Extract security information from a decoded ITS message.
 
     Decoded messages from asn1tools may contain security-related fields
@@ -389,24 +382,13 @@ def extract_security_from_decoded(
         # CAM basicContainer has stationType
         station_type_int = basic.get("stationType")
         if station_type_int is not None:
-            info.station_type = STATION_TYPE_NAMES.get(
-                station_type_int, f"type_{station_type_int}"
-            )
+            info.station_type = STATION_TYPE_NAMES.get(station_type_int, f"type_{station_type_int}")
 
     elif msg_type == "DENM":
         denm = decoded.get("denm", decoded)
         mgmt = denm.get("managementContainer", {})
         station_type_int = mgmt.get("stationType")
         if station_type_int is not None:
-            info.station_type = STATION_TYPE_NAMES.get(
-                station_type_int, f"type_{station_type_int}"
-            )
+            info.station_type = STATION_TYPE_NAMES.get(station_type_int, f"type_{station_type_int}")
 
-    return (
-        info
-        if any(
-            v is not None
-            for v in [info.protocol_version, info.its_aid_list, info.station_type]
-        )
-        else None
-    )
+    return info if any(v is not None for v in [info.protocol_version, info.its_aid_list, info.station_type]) else None

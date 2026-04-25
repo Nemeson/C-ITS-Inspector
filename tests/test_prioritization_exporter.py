@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pcap2kml_player.data_model import CaptureRole, MessageSource, MessageType, V2xMessage
 from pcap2kml_player.prioritization_exporter import (
@@ -15,7 +15,7 @@ from pcap2kml_player.prioritization_exporter import (
 
 
 def test_export_prioritization_issues_writes_csv_and_json(tmp_path):
-    now = datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC)
     messages = [
         V2xMessage(
             timestamp=now,

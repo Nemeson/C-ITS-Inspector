@@ -1,13 +1,14 @@
 """Tests for request-centric ETA analysis helpers."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pcap2kml_player.data_model import MessageType, V2xMessage
+from pcap2kml_player.scene_model import build_scene_snapshot
 from pcap2kml_player.ui.eta_graph_widget import (
     DiagnosticItem,
+    EtaGraphWidget,
     EtaPoint,
     EtaSelection,
-    EtaGraphWidget,
     RequestEvent,
     StatusBand,
     _build_status_bands,
@@ -15,11 +16,10 @@ from pcap2kml_player.ui.eta_graph_widget import (
     _smooth_speed_points,
     build_eta_selection_options,
 )
-from pcap2kml_player.scene_model import build_scene_snapshot
 
 
 def _ts(seconds: float):
-    return datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc) + timedelta(seconds=seconds)
+    return datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC) + timedelta(seconds=seconds)
 
 
 def test_build_eta_selection_options_prefers_request_merge_keys():

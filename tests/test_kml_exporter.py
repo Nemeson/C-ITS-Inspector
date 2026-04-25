@@ -1,6 +1,6 @@
 """Tests for KML export (simplekml-based)."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -20,7 +20,7 @@ NS = {"kml": "http://www.opengis.net/kml/2.2"}
 
 def _mk_msg(station: str, msg_type: MessageType, lat: float, lon: float, offset_s: float):
     return V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc) + timedelta(seconds=offset_s),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC) + timedelta(seconds=offset_s),
         station_id=station,
         msg_type=msg_type,
         latitude=lat,
@@ -133,7 +133,7 @@ def test_kml_message_type_colors_are_unique():
 
 
 def test_export_kml_can_use_canonical_merged_messages(tmp_path: Path):
-    base = datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC)
     tx = V2xMessage(
         timestamp=base,
         station_id="bus-7",

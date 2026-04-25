@@ -11,8 +11,8 @@ from pcap2kml_player.nmea_parser import (
     parse_nmea_sentence,
 )
 
-
 # ---------- coordinate conversion ----------
+
 
 def test_nmea_to_decimal_north():
     # 48 deg 07.038 min N  -> 48 + 7.038/60
@@ -36,6 +36,7 @@ def test_nmea_to_decimal_empty_returns_zero():
 
 
 # ---------- GPGGA ----------
+
 
 def test_parse_gpgga_valid_fix():
     sentence = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"
@@ -78,6 +79,7 @@ def test_parse_gpgga_missing_checksum_is_accepted():
 
 # ---------- GPRMC ----------
 
+
 def test_parse_gprmc_valid_active():
     sentence = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"
     msg = parse_gprmc(sentence)
@@ -115,6 +117,7 @@ def test_validate_nmea_checksum_handles_empty_string():
 
 
 # ---------- parse_nmea_sentence dispatcher ----------
+
 
 def test_parse_nmea_sentence_dispatches_gpgga():
     raw = b"$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"

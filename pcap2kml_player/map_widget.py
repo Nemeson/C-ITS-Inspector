@@ -13,7 +13,6 @@ import time
 from dataclasses import asdict, dataclass
 from math import cos, hypot, radians
 from pathlib import Path
-from typing import Optional
 
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal, pyqtSlot
@@ -157,9 +156,7 @@ def _marker_id_for_message(msg: V2xMessage) -> str:
 
 def _marker_position_for_message(msg: V2xMessage) -> tuple[float, float]:
     """Slightly offset infrastructure markers so MAP/SPAT stay visible together."""
-    lat_offset, lon_offset = INFRASTRUCTURE_MESSAGE_OFFSETS.get(
-        msg.msg_type, (0.0, 0.0)
-    )
+    lat_offset, lon_offset = INFRASTRUCTURE_MESSAGE_OFFSETS.get(msg.msg_type, (0.0, 0.0))
     return (msg.latitude + lat_offset, msg.longitude + lon_offset)
 
 
@@ -172,7 +169,7 @@ def _has_display_position(msg: V2xMessage) -> bool:
     return True
 
 
-def _coerce_lat_lon(value: object) -> Optional[tuple[float, float]]:
+def _coerce_lat_lon(value: object) -> tuple[float, float] | None:
     """Normalize mixed ASN.1 coordinate shapes to decimal degrees."""
     if not isinstance(value, dict):
         return None
@@ -247,7 +244,7 @@ def _lane_points(lane: dict) -> list[tuple[float, float]]:
     return points
 
 
-def _lane_identifier(lane: dict) -> Optional[str]:
+def _lane_identifier(lane: dict) -> str | None:
     """Return a human-readable lane identifier if one exists."""
     for key in ("laneID", "laneId", "id"):
         value = lane.get(key)
@@ -257,7 +254,7 @@ def _lane_identifier(lane: dict) -> Optional[str]:
     return None
 
 
-def _lane_role(lane: dict) -> Optional[str]:
+def _lane_role(lane: dict) -> str | None:
     """Return a normalized lane role label."""
     role = lane.get("laneRole")
     if isinstance(role, str):
@@ -269,7 +266,7 @@ def _lane_role(lane: dict) -> Optional[str]:
     return None
 
 
-def _coerce_int(value: object) -> Optional[int]:
+def _coerce_int(value: object) -> int | None:
     """Best-effort integer coercion for decoded MAP/SPAT helper fields."""
     if isinstance(value, bool):
         return int(value)
@@ -314,26 +311,20 @@ def _iter_message_intersections(msg: V2xMessage) -> list[dict]:
     """Return decoded intersections or a raw fallback for infrastructure messages."""
     intersections = msg.decoded_data.get("intersections")
     if isinstance(intersections, list) and intersections:
-        return [
-            intersection
-            for intersection in intersections
-            if isinstance(intersection, dict)
-        ]
+        return [intersection for intersection in intersections if isinstance(intersection, dict)]
     return [{}]
 
 
 def _polyline_label_point(
     points: list[tuple[float, float]],
-) -> Optional[tuple[float, float]]:
+) -> tuple[float, float] | None:
     """Place a label near the middle of a lane polyline."""
     if not points:
         return None
     return points[len(points) // 2]
 
 
-def _point_distance_meters(
-    point_a: tuple[float, float], point_b: tuple[float, float]
-) -> float:
+def _point_distance_meters(point_a: tuple[float, float], point_b: tuple[float, float]) -> float:
     """Approximate local distance in meters between two nearby points."""
     lat_scale = 111_320.0
     lon_scale = max(1e-6, 111_320.0 * cos(radians((point_a[0] + point_b[0]) / 2.0)))
@@ -345,20 +336,15 @@ def _point_distance_meters(
 def _display_anchor_points(
     messages: list[V2xMessage],
     *,
-    max_index: Optional[int] = None,
+    max_index: int | None = None,
 ) -> list[tuple[float, float]]:
     """Return stable infrastructure points used to reject far-away display outliers."""
     anchors: list[tuple[float, float]] = []
-    end_index = (
-        len(messages) if max_index is None else min(max_index + 1, len(messages))
-    )
+    end_index = len(messages) if max_index is None else min(max_index + 1, len(messages))
     for index, msg in enumerate(messages):
         if index >= end_index:
             break
-        if (
-            msg.msg_type not in INFRASTRUCTURE_MESSAGE_COLORS
-            or not _has_display_position(msg)
-        ):
+        if msg.msg_type not in INFRASTRUCTURE_MESSAGE_COLORS or not _has_display_position(msg):
             continue
         for intersection in _iter_message_intersections(msg):
             anchors.append(_intersection_point(intersection, msg))
@@ -377,7 +363,7 @@ def _is_near_display_anchors(
     return any(_point_distance_meters(point, anchor) <= radius_m for anchor in anchors)
 
 
-def _valid_lat_lon(lat: object, lon: object) -> Optional[tuple[float, float]]:
+def _valid_lat_lon(lat: object, lon: object) -> tuple[float, float] | None:
     """Return a finite WGS84 coordinate pair suitable for Leaflet bounds."""
     try:
         lat_num = float(lat)
@@ -392,7 +378,7 @@ def _valid_lat_lon(lat: object, lon: object) -> Optional[tuple[float, float]]:
 def _payload_bounds(
     markers: list[dict[str, object]],
     infrastructure: list[dict[str, object]],
-) -> Optional[list[list[float]]]:
+) -> list[list[float]] | None:
     """Build stable Leaflet bounds from the explicit render payload."""
     points: list[tuple[float, float]] = []
     for marker in markers:
@@ -429,7 +415,7 @@ def _payload_bounds(
 def _lane_anchor_points(
     lane: dict,
     intersection_point: tuple[float, float],
-) -> Optional[tuple[tuple[float, float], tuple[float, float]]]:
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
     """Return (intersection-facing point, outer point) for one lane."""
     points = _lane_points(lane)
     if len(points) < 2:
@@ -446,7 +432,7 @@ def _connection_curve_points(
     source_lane: dict,
     target_lane: dict,
     intersection_point: tuple[float, float],
-) -> Optional[list[tuple[float, float]]]:
+) -> list[tuple[float, float]] | None:
     """Build a simple schematic curve between inbound and outbound lanes."""
     source_anchors = _lane_anchor_points(source_lane, intersection_point)
     target_anchors = _lane_anchor_points(target_lane, intersection_point)
@@ -462,7 +448,7 @@ def _connection_curve_points(
     return [source_inner, control_point, target_inner]
 
 
-def _lane_popup_text(lane: dict, role: Optional[str]) -> str:
+def _lane_popup_text(lane: dict, role: str | None) -> str:
     """Build a compact popup for a MAP lane."""
     parts = ["MAPEM Lane"]
     lane_id = _lane_identifier(lane)
@@ -473,7 +459,7 @@ def _lane_popup_text(lane: dict, role: Optional[str]) -> str:
     return " | ".join(parts)
 
 
-def _stopline_points(lane: dict) -> Optional[list[tuple[float, float]]]:
+def _stopline_points(lane: dict) -> list[tuple[float, float]] | None:
     """Extract normalized stopline points from a normalized lane."""
     stop_line = lane.get("stopLine")
     if not isinstance(stop_line, dict):
@@ -509,9 +495,7 @@ def _request_overlay_offset_m(display_rank: int) -> float:
     return step if display_rank % 2 == 1 else -step
 
 
-def _offset_polyline(
-    coords: list[tuple[float, float]], offset_m: float
-) -> list[tuple[float, float]]:
+def _offset_polyline(coords: list[tuple[float, float]], offset_m: float) -> list[tuple[float, float]]:
     """Shift a short polyline sideways to avoid complete overlap."""
     if abs(offset_m) < 0.01 or len(coords) < 2:
         return coords
@@ -553,7 +537,7 @@ def _request_popup_parts(request_visual: dict[str, object]) -> list[str]:
     return parts
 
 
-def _spat_intersection_phase(intersection: dict) -> Optional[str]:
+def _spat_intersection_phase(intersection: dict) -> str | None:
     """Extract the currently active SPAT phase from the first signal group."""
     states = intersection.get("states")
     if not isinstance(states, list):
@@ -561,9 +545,7 @@ def _spat_intersection_phase(intersection: dict) -> Optional[str]:
     for signal_group in states:
         if not isinstance(signal_group, dict):
             continue
-        events = signal_group.get(
-            "stateTimeSpeed", signal_group.get("state-time-speed")
-        )
+        events = signal_group.get("stateTimeSpeed", signal_group.get("state-time-speed"))
         if not isinstance(events, list):
             continue
         for event in events:
@@ -580,9 +562,7 @@ def _spat_color_for_intersection(intersection: dict) -> str:
     phase = _spat_intersection_phase(intersection)
     if phase is None:
         return INFRASTRUCTURE_MESSAGE_COLORS[MessageType.SPATEM]
-    return SPAT_PHASE_COLORS.get(
-        phase, INFRASTRUCTURE_MESSAGE_COLORS[MessageType.SPATEM]
-    )
+    return SPAT_PHASE_COLORS.get(phase, INFRASTRUCTURE_MESSAGE_COLORS[MessageType.SPATEM])
 
 
 def _spat_states_by_group(intersection: dict) -> dict[int, str]:
@@ -597,9 +577,7 @@ def _spat_states_by_group(intersection: dict) -> dict[int, str]:
         signal_group_id = _coerce_int(signal_group.get("signalGroup"))
         if signal_group_id is None:
             continue
-        events = signal_group.get(
-            "stateTimeSpeed", signal_group.get("state-time-speed")
-        )
+        events = signal_group.get("stateTimeSpeed", signal_group.get("state-time-speed"))
         if not isinstance(events, list):
             continue
         for event in events:
@@ -624,9 +602,7 @@ def _spat_tooltips_by_group(intersection: dict) -> dict[int, str]:
         signal_group_id = _coerce_int(signal_group.get("signalGroup"))
         if signal_group_id is None:
             continue
-        events = signal_group.get(
-            "stateTimeSpeed", signal_group.get("state-time-speed")
-        )
+        events = signal_group.get("stateTimeSpeed", signal_group.get("state-time-speed"))
         if not isinstance(events, list):
             continue
         for event in events:
@@ -669,9 +645,7 @@ def _lane_signal_group_ids(lane: dict) -> list[int]:
     return signal_groups
 
 
-def _intersection_popup(
-    msg: V2xMessage, intersection: Optional[dict], fallback_label: str
-) -> str:
+def _intersection_popup(msg: V2xMessage, intersection: dict | None, fallback_label: str) -> str:
     """Build a concise popup text for infrastructure overlays."""
     if not isinstance(intersection, dict):
         return fallback_label
@@ -717,13 +691,9 @@ def _infrastructure_overlays_for_message(msg: V2xMessage) -> list[dict[str, obje
             if point is None:
                 point = (msg.latitude, msg.longitude)
 
-            popup = _intersection_popup(
-                msg, intersection, f"{msg.msg_type.value} Intersection"
-            )
+            popup = _intersection_popup(msg, intersection, f"{msg.msg_type.value} Intersection")
             circle_color = (
-                _spat_color_for_intersection(intersection)
-                if msg.msg_type == MessageType.SPATEM
-                else base_color
+                _spat_color_for_intersection(intersection) if msg.msg_type == MessageType.SPATEM else base_color
             )
             overlays.append(
                 {
@@ -761,13 +731,7 @@ def _infrastructure_overlays_for_message(msg: V2xMessage) -> list[dict[str, obje
                         continue
                     role = _lane_role(lane)
                     lane_color = LANE_ROLE_COLORS.get(role, base_color)
-                    lane_layer = (
-                        "map_inbound"
-                        if role == "inbound"
-                        else "map_outbound"
-                        if role == "outbound"
-                        else layer
-                    )
+                    lane_layer = "map_inbound" if role == "inbound" else "map_outbound" if role == "outbound" else layer
                     overlays.append(
                         {
                             "kind": "polyline",
@@ -800,9 +764,7 @@ def _infrastructure_overlays_for_message(msg: V2xMessage) -> list[dict[str, obje
                                 "id": f"{msg.msg_type.value}_{msg.station_id}_{index}_lane_{polyline_index}_stopline",
                                 "coords": [[lat, lon] for lat, lon in stopline_points],
                                 "color": STOPLINE_COLOR,
-                                "popup": f"Stopline | Lane {lane_id}"
-                                if lane_id
-                                else "Stopline",
+                                "popup": f"Stopline | Lane {lane_id}" if lane_id else "Stopline",
                                 "layer": "map_stoplines",
                             }
                         )
@@ -838,15 +800,13 @@ def _infrastructure_overlays_for_message(msg: V2xMessage) -> list[dict[str, obje
 def _infrastructure_overlays_for_messages(
     messages: list[V2xMessage],
     *,
-    max_index: Optional[int] = None,
+    max_index: int | None = None,
 ) -> list[dict[str, object]]:
     """Aggregate the latest MAP/SPAT context per intersection into render overlays."""
     if not messages:
         return []
 
-    end_index = (
-        len(messages) if max_index is None else min(max_index + 1, len(messages))
-    )
+    end_index = len(messages) if max_index is None else min(max_index + 1, len(messages))
     if end_index <= 0:
         return []
     timeline_position = messages[end_index - 1].timestamp
@@ -875,16 +835,10 @@ def _infrastructure_overlays_for_messages(
         if map_entry is not None:
             map_msg, map_intersection = map_entry
             map_point = _intersection_point(map_intersection, map_msg)
-            map_popup = _intersection_popup(
-                map_msg, map_intersection, "MAPEM Intersection"
-            )
-            intersection_numeric_id = _coerce_int(
-                map_intersection.get("intersectionId", map_intersection.get("id"))
-            )
+            map_popup = _intersection_popup(map_msg, map_intersection, "MAPEM Intersection")
+            intersection_numeric_id = _coerce_int(map_intersection.get("intersectionId", map_intersection.get("id")))
             intersection_requests = (
-                request_visuals.get(intersection_numeric_id, [])
-                if intersection_numeric_id is not None
-                else []
+                request_visuals.get(intersection_numeric_id, []) if intersection_numeric_id is not None else []
             )
             if SHOW_INFRASTRUCTURE_POINT_OVERLAYS:
                 overlays.append(
@@ -914,16 +868,10 @@ def _infrastructure_overlays_for_messages(
             lane_set = map_intersection.get("laneSet")
             if not isinstance(lane_set, list):
                 lane_set = []
-            spat_states = (
-                _spat_states_by_group(spat_entry[1]) if spat_entry is not None else {}
-            )
-            spat_tooltips = (
-                _spat_tooltips_by_group(spat_entry[1]) if spat_entry is not None else {}
-            )
+            spat_states = _spat_states_by_group(spat_entry[1]) if spat_entry is not None else {}
+            spat_tooltips = _spat_tooltips_by_group(spat_entry[1]) if spat_entry is not None else {}
             lane_by_id = {
-                _coerce_int(
-                    lane.get("laneId", lane.get("laneID", lane.get("id")))
-                ): lane
+                _coerce_int(lane.get("laneId", lane.get("laneID", lane.get("id")))): lane
                 for lane in lane_set
                 if isinstance(lane, dict)
             }
@@ -935,16 +883,8 @@ def _infrastructure_overlays_for_messages(
                     continue
                 lane_id = _lane_identifier(lane)
                 role = _lane_role(lane)
-                lane_color = LANE_ROLE_COLORS.get(
-                    role, INFRASTRUCTURE_MESSAGE_COLORS[MessageType.MAPEM]
-                )
-                lane_layer = (
-                    "map_inbound"
-                    if role == "inbound"
-                    else "map_outbound"
-                    if role == "outbound"
-                    else "map"
-                )
+                lane_color = LANE_ROLE_COLORS.get(role, INFRASTRUCTURE_MESSAGE_COLORS[MessageType.MAPEM])
+                lane_layer = "map_inbound" if role == "inbound" else "map_outbound" if role == "outbound" else "map"
                 overlays.append(
                     {
                         "kind": "polyline",
@@ -982,9 +922,7 @@ def _infrastructure_overlays_for_messages(
                             "id": f"{key}_lane_{polyline_index}_stopline",
                             "coords": [[lat, lon] for lat, lon in stopline_points],
                             "color": STOPLINE_COLOR,
-                            "popup": f"Stopline | Lane {lane_id}"
-                            if lane_id
-                            else "Stopline",
+                            "popup": f"Stopline | Lane {lane_id}" if lane_id else "Stopline",
                             "layer": "map_stoplines",
                         }
                     )
@@ -995,25 +933,17 @@ def _infrastructure_overlays_for_messages(
                 for connection in connections:
                     if not isinstance(connection, dict):
                         continue
-                    target_lane_id = _coerce_int(
-                        connection.get("targetLaneId", connection.get("connectingLane"))
-                    )
+                    target_lane_id = _coerce_int(connection.get("targetLaneId", connection.get("connectingLane")))
                     if target_lane_id is None:
                         continue
                     target_lane = lane_by_id.get(target_lane_id)
                     if not isinstance(target_lane, dict):
                         continue
-                    connection_points = _connection_curve_points(
-                        lane, target_lane, map_point
-                    )
+                    connection_points = _connection_curve_points(lane, target_lane, map_point)
                     if connection_points is None:
                         continue
                     signal_group = _coerce_int(connection.get("signalGroup"))
-                    matched_phase = (
-                        spat_states.get(signal_group)
-                        if signal_group is not None
-                        else None
-                    )
+                    matched_phase = spat_states.get(signal_group) if signal_group is not None else None
                     connection_color = (
                         SPAT_PHASE_COLORS.get(
                             matched_phase,
@@ -1054,16 +984,11 @@ def _infrastructure_overlays_for_messages(
                     matching_requests = [
                         visual
                         for visual in intersection_requests
-                        if visual.in_lane
-                        == _coerce_int(
-                            lane.get("laneId", lane.get("laneID", lane.get("id")))
-                        )
+                        if visual.in_lane == _coerce_int(lane.get("laneId", lane.get("laneID", lane.get("id"))))
                         and visual.out_lane == target_lane_id
                     ]
                     for request_visual in matching_requests:
-                        style = _request_overlay_style(
-                            request_visual.status.value, request_visual.is_dominant
-                        )
+                        style = _request_overlay_style(request_visual.status.value, request_visual.is_dominant)
                         request_coords = _offset_polyline(
                             connection_points,
                             _request_overlay_offset_m(request_visual.display_rank),
@@ -1098,19 +1023,11 @@ def _infrastructure_overlays_for_messages(
                 lane_requests = [
                     visual
                     for visual in intersection_requests
-                    if visual.in_lane
-                    == _coerce_int(
-                        lane.get("laneId", lane.get("laneID", lane.get("id")))
-                    )
-                    or visual.out_lane
-                    == _coerce_int(
-                        lane.get("laneId", lane.get("laneID", lane.get("id")))
-                    )
+                    if visual.in_lane == _coerce_int(lane.get("laneId", lane.get("laneID", lane.get("id"))))
+                    or visual.out_lane == _coerce_int(lane.get("laneId", lane.get("laneID", lane.get("id"))))
                 ]
                 for request_visual in lane_requests:
-                    style = _request_overlay_style(
-                        request_visual.status.value, request_visual.is_dominant
-                    )
+                    style = _request_overlay_style(request_visual.status.value, request_visual.is_dominant)
                     request_coords = _offset_polyline(
                         points,
                         _request_overlay_offset_m(request_visual.display_rank),
@@ -1127,10 +1044,7 @@ def _infrastructure_overlays_for_messages(
                     )
                     lane_popup_parts.append(
                         "Inbound-Lane"
-                        if request_visual.in_lane
-                        == _coerce_int(
-                            lane.get("laneId", lane.get("laneID", lane.get("id")))
-                        )
+                        if request_visual.in_lane == _coerce_int(lane.get("laneId", lane.get("laneID", lane.get("id"))))
                         else "Outbound-Lane"
                     )
                     overlays.append(
@@ -1154,9 +1068,7 @@ def _infrastructure_overlays_for_messages(
         if spat_entry is not None:
             spat_msg, spat_intersection = spat_entry
             spat_point = _intersection_point(spat_intersection, spat_msg)
-            spat_popup = _intersection_popup(
-                spat_msg, spat_intersection, "SPATEM Intersection"
-            )
+            spat_popup = _intersection_popup(spat_msg, spat_intersection, "SPATEM Intersection")
             spat_color = _spat_color_for_intersection(spat_intersection)
             if SHOW_INFRASTRUCTURE_POINT_OVERLAYS:
                 overlays.append(
@@ -1839,20 +1751,12 @@ class DiagnosticWebEnginePage(QWebEnginePage):
 
     java_script_issue = pyqtSignal(str)
 
-    def javaScriptConsoleMessage(
-        self, level, message: str, line_number: int, source_id: str
-    ) -> None:
+    def javaScriptConsoleMessage(self, level, message: str, line_number: int, source_id: str) -> None:
         """Capture JS console issues that otherwise only appear in the terminal."""
         super().javaScriptConsoleMessage(level, message, line_number, source_id)
         level_name = getattr(level, "name", str(level))
-        if (
-            "Error" in level_name
-            or "ReferenceError" in message
-            or "TypeError" in message
-        ):
-            self.java_script_issue.emit(
-                f"{level_name}: {message} ({source_id}:{line_number})"
-            )
+        if "Error" in level_name or "ReferenceError" in message or "TypeError" in message:
+            self.java_script_issue.emit(f"{level_name}: {message} ({source_id}:{line_number})")
 
 
 class MapWidget(QWebEngineView):
@@ -1867,9 +1771,7 @@ class MapWidget(QWebEngineView):
 
         # Set a proper User-Agent so OSM tile servers don't reject requests with 403
         profile = QWebEngineProfile.defaultProfile()
-        profile.setHttpUserAgent(
-            "PCAP2KML-Player/1.0 (Windows; V2X-Viewer) OSM-Tiles/1.0"
-        )
+        profile.setHttpUserAgent("PCAP2KML-Player/1.0 (Windows; V2X-Viewer) OSM-Tiles/1.0")
         self._diagnostic_page = DiagnosticWebEnginePage(profile, self)
         self.setPage(self._diagnostic_page)
         self._diagnostic_page.settings().setAttribute(
@@ -1884,35 +1786,31 @@ class MapWidget(QWebEngineView):
 
         self._station_color_map: dict[str, str] = {}
         self._station_index = 0
-        self._follow_station_id: Optional[str] = None
+        self._follow_station_id: str | None = None
         self._performance_mode = MAP_PERFORMANCE_NORMAL
         self._page_ready = False
         self._pending_scripts: list[str] = []
         self._render_payload_in_flight = False
-        self._queued_render_payload_script: Optional[str] = None
-        self._render_payload_started_at: Optional[float] = None
+        self._queued_render_payload_script: str | None = None
+        self._render_payload_started_at: float | None = None
         self._render_payload_stall_generation = 0
         self._bootstrap_generation = 0
         self._bootstrap_probe_succeeded = False
         self._ever_bootstrapped = False
         self._disposed = False
-        self._latest_telemetry: Optional[MapRenderTelemetry] = None
+        self._latest_telemetry: MapRenderTelemetry | None = None
         self._last_payload_was_replaced = False
 
         self._bridge.message_clicked.connect(self._on_marker_clicked)
         self.loadFinished.connect(self._on_load_finished)
-        self._diagnostic_page.renderProcessTerminated.connect(
-            self._on_render_process_terminated
-        )
+        self._diagnostic_page.renderProcessTerminated.connect(self._on_render_process_terminated)
 
         # Owned timers for clean disposal
-        self._bootstrap_timer: Optional[QTimer] = None
-        self._stall_timer: Optional[QTimer] = None
+        self._bootstrap_timer: QTimer | None = None
+        self._stall_timer: QTimer | None = None
 
         logger.info("Map backend created: webengine")
-        self.setHtml(
-            _leaflet_runtime_html(), QUrl.fromLocalFile(str(_asset_base_path()) + "/")
-        )
+        self.setHtml(_leaflet_runtime_html(), QUrl.fromLocalFile(str(_asset_base_path()) + "/"))
         self._schedule_bootstrap_timeout()
 
     def dispose(self) -> None:
@@ -1941,17 +1839,13 @@ class MapWidget(QWebEngineView):
     def _get_station_color(self, station_id: str) -> str:
         """Assign a color to a station ID, creating a new one if needed."""
         if station_id not in self._station_color_map:
-            self._station_color_map[station_id] = STATION_PALETTE[
-                self._station_index % len(STATION_PALETTE)
-            ]
+            self._station_color_map[station_id] = STATION_PALETTE[self._station_index % len(STATION_PALETTE)]
             self._station_index += 1
         return self._station_color_map[station_id]
 
     def _color_for_message(self, msg: V2xMessage) -> str:
         """Pick a marker color, with dedicated infrastructure colors for MAP/SPAT."""
-        return INFRASTRUCTURE_MESSAGE_COLORS.get(
-            msg.msg_type, self._get_station_color(msg.station_id)
-        )
+        return INFRASTRUCTURE_MESSAGE_COLORS.get(msg.msg_type, self._get_station_color(msg.station_id))
 
     def set_performance_mode(self, mode: str) -> None:
         """Set the map rendering detail level used for future payloads."""
@@ -1962,7 +1856,7 @@ class MapWidget(QWebEngineView):
         self._performance_mode = mode
         self._run_js(f"setMapPerformanceMode('{mode}')")
 
-    def latest_telemetry(self) -> Optional[dict[str, object]]:
+    def latest_telemetry(self) -> dict[str, object] | None:
         """Return the latest render telemetry, if available."""
         if self._latest_telemetry is None:
             return None
@@ -1978,9 +1872,7 @@ class MapWidget(QWebEngineView):
         self._render_payload_in_flight = False
         self._queued_render_payload_script = None
         self._render_payload_started_at = None
-        self.setHtml(
-            _leaflet_runtime_html(), QUrl.fromLocalFile(str(_asset_base_path()) + "/")
-        )
+        self.setHtml(_leaflet_runtime_html(), QUrl.fromLocalFile(str(_asset_base_path()) + "/"))
         self._schedule_bootstrap_timeout()
 
     def load_messages(self, messages: list[V2xMessage]) -> None:
@@ -2001,7 +1893,7 @@ class MapWidget(QWebEngineView):
         messages: list[V2xMessage],
         current_index: int,
         *,
-        window_seconds: Optional[float] = None,
+        window_seconds: float | None = None,
     ) -> None:
         """Render only the state visible up to the current playback index."""
         if not messages:
@@ -2024,8 +1916,8 @@ class MapWidget(QWebEngineView):
         self,
         messages: list[V2xMessage],
         *,
-        max_index: Optional[int],
-        window_start_timestamp: Optional[float] = None,
+        max_index: int | None,
+        window_start_timestamp: float | None = None,
         fit_view: bool,
         short_trails: bool,
         clear_first: bool,
@@ -2035,16 +1927,12 @@ class MapWidget(QWebEngineView):
         # Group by station for trajectories
         station_coords: dict[str, list] = {}
         markers_by_id: dict[str, dict[str, object]] = {}
-        performance_mode = self.__dict__.get(
-            "_performance_mode", MAP_PERFORMANCE_NORMAL
-        )
+        performance_mode = self.__dict__.get("_performance_mode", MAP_PERFORMANCE_NORMAL)
         budget = MAP_RENDER_BUDGETS.get(
             performance_mode,
             MAP_RENDER_BUDGETS[MAP_PERFORMANCE_NORMAL],
         )
-        end_index = (
-            len(messages) if max_index is None else min(max_index + 1, len(messages))
-        )
+        end_index = len(messages) if max_index is None else min(max_index + 1, len(messages))
         display_anchors = _display_anchor_points(messages, max_index=max_index)
         visible_message_count = 0
 
@@ -2052,9 +1940,7 @@ class MapWidget(QWebEngineView):
             if index >= end_index:
                 break
             msg_timestamp = msg.timestamp.timestamp()
-            if not _has_display_position(msg) or not _is_near_display_anchors(
-                msg, display_anchors
-            ):
+            if not _has_display_position(msg) or not _is_near_display_anchors(msg, display_anchors):
                 continue
             if (
                 window_start_timestamp is not None
@@ -2087,22 +1973,13 @@ class MapWidget(QWebEngineView):
 
             # Collect trajectory coordinates
             if msg.msg_type not in NON_STATION_MARKER_TYPES:
-                station_coords.setdefault(msg.station_id, []).append(
-                    [msg.latitude, msg.longitude]
-                )
+                station_coords.setdefault(msg.station_id, []).append([msg.latitude, msg.longitude])
 
         infrastructure_payload: list[dict[str, object]] = []
-        for overlay in _infrastructure_overlays_for_messages(
-            messages, max_index=max_index
-        ):
-            if (
-                performance_mode != MAP_PERFORMANCE_NORMAL
-                and overlay["kind"] == "label"
-            ):
+        for overlay in _infrastructure_overlays_for_messages(messages, max_index=max_index):
+            if performance_mode != MAP_PERFORMANCE_NORMAL and overlay["kind"] == "label":
                 continue
-            if performance_mode == MAP_PERFORMANCE_DIAGNOSTIC and overlay.get(
-                "layer"
-            ) not in {
+            if performance_mode == MAP_PERFORMANCE_DIAGNOSTIC and overlay.get("layer") not in {
                 "map_inbound",
                 "map_outbound",
                 "map_connections",
@@ -2185,13 +2062,9 @@ class MapWidget(QWebEngineView):
             len(infrastructure_payload) - int(budget["infrastructure"]),
         )
         if dropped_infrastructure:
-            infrastructure_payload = infrastructure_payload[
-                : int(budget["infrastructure"])
-            ]
+            infrastructure_payload = infrastructure_payload[: int(budget["infrastructure"])]
 
-        dropped_trajectories = max(
-            0, len(trajectories_payload) - int(budget["trajectories"])
-        )
+        dropped_trajectories = max(0, len(trajectories_payload) - int(budget["trajectories"]))
         if dropped_trajectories:
             trajectories_payload = trajectories_payload[-int(budget["trajectories"]) :]
 
@@ -2220,9 +2093,7 @@ class MapWidget(QWebEngineView):
                 marker_count=len(marker_payload),
                 infrastructure_count=len(infrastructure_payload),
                 trajectory_count=len(trajectories_payload),
-                trajectory_point_count=sum(
-                    len(trajectory["coords"]) for trajectory in trajectories_payload
-                ),
+                trajectory_point_count=sum(len(trajectory["coords"]) for trajectory in trajectories_payload),
                 payload_bytes=len(payload_json.encode("utf-8")),
                 budget_dropped_markers=dropped_markers,
                 budget_dropped_infrastructure=dropped_infrastructure,
@@ -2239,14 +2110,10 @@ class MapWidget(QWebEngineView):
     ) -> int:
         """Trim old trajectory points to keep the payload inside the mode budget."""
         if max_points <= 0:
-            dropped = sum(
-                len(trajectory["coords"]) for trajectory in trajectories_payload
-            )
+            dropped = sum(len(trajectory["coords"]) for trajectory in trajectories_payload)
             trajectories_payload.clear()
             return dropped
-        current_points = sum(
-            len(trajectory["coords"]) for trajectory in trajectories_payload
-        )
+        current_points = sum(len(trajectory["coords"]) for trajectory in trajectories_payload)
         if current_points <= max_points:
             return 0
 
@@ -2292,13 +2159,9 @@ class MapWidget(QWebEngineView):
         if self._follow_station_id and msg.station_id == self._follow_station_id:
             self._run_js(f"followMarker('{_js_escape(marker_id)}')")
 
-    def highlight_request(
-        self, intersection_id: int, request_id: int, sequence_number: int
-    ) -> None:
+    def highlight_request(self, intersection_id: int, request_id: int, sequence_number: int) -> None:
         """Highlight a rendered prioritization request route."""
-        self._run_js(
-            f"highlightRequest({intersection_id}, {request_id}, {sequence_number})"
-        )
+        self._run_js(f"highlightRequest({intersection_id}, {request_id}, {sequence_number})")
 
     def focus_intersection(self, intersection_id: int) -> None:
         """Focus the map around one rendered intersection."""
@@ -2342,9 +2205,7 @@ class MapWidget(QWebEngineView):
             logger.warning("Leaflet map page did not finish loading")
             self._emit_map_issue("Karten-WebView konnte nicht geladen werden")
             return
-        logger.info(
-            "WebEngine loadFinished(ok=True) — starting Leaflet bootstrap probe"
-        )
+        logger.info("WebEngine loadFinished(ok=True) — starting Leaflet bootstrap probe")
         self._execute_js(
             "typeof L !== 'undefined' && typeof map !== 'undefined'",
             self._on_bootstrap_probe_finished,
@@ -2363,16 +2224,10 @@ class MapWidget(QWebEngineView):
             self._ever_bootstrapped = True
             logger.info("Leaflet bootstrap probe succeeded — map is ready")
         elif result is False:
-            logger.warning(
-                "Leaflet bootstrap probe returned False — map not initialised"
-            )
-            self._emit_map_issue(
-                "Leaflet wurde geladen, aber die Karte wurde nicht initialisiert"
-            )
+            logger.warning("Leaflet bootstrap probe returned False — map not initialised")
+            self._emit_map_issue("Leaflet wurde geladen, aber die Karte wurde nicht initialisiert")
         else:
-            logger.warning(
-                "Leaflet bootstrap probe returned %r — treating as failure", result
-            )
+            logger.warning("Leaflet bootstrap probe returned %r — treating as failure", result)
             self._emit_map_issue("Leaflet-Bootstrap konnte nicht verifiziert werden")
 
     def _schedule_bootstrap_timeout(self) -> None:
@@ -2402,8 +2257,7 @@ class MapWidget(QWebEngineView):
             return
         if self.__dict__.get("_ever_bootstrapped", False):
             logger.warning(
-                "Bootstrap timeout ignored after earlier successful Leaflet bootstrap "
-                "(page_ready=%s)",
+                "Bootstrap timeout ignored after earlier successful Leaflet bootstrap (page_ready=%s)",
                 self.__dict__.get("_page_ready", False),
             )
             return
@@ -2412,9 +2266,7 @@ class MapWidget(QWebEngineView):
             MAP_BOOTSTRAP_TIMEOUT_SECONDS,
             self.__dict__.get("_page_ready", False),
         )
-        self._emit_map_issue(
-            f"Karten-WebView Initialisierungstimeout nach {MAP_BOOTSTRAP_TIMEOUT_SECONDS:.0f}s"
-        )
+        self._emit_map_issue(f"Karten-WebView Initialisierungstimeout nach {MAP_BOOTSTRAP_TIMEOUT_SECONDS:.0f}s")
 
     def _on_render_process_terminated(self, termination_status, exit_code: int) -> None:
         """Handle Chromium render process crash or abnormal exit."""
@@ -2427,9 +2279,7 @@ class MapWidget(QWebEngineView):
         )
         self._bootstrap_probe_succeeded = False
         self._page_ready = False
-        self._emit_map_issue(
-            f"WebEngine Render-Prozess beendet (Status={termination_status}, Code={exit_code})"
-        )
+        self._emit_map_issue(f"WebEngine Render-Prozess beendet (Status={termination_status}, Code={exit_code})")
 
     def _run_js(self, script: str) -> None:
         """Execute JavaScript in the web page."""
@@ -2508,15 +2358,10 @@ class MapWidget(QWebEngineView):
         if generation != self._render_payload_stall_generation:
             return
         started_at = self.__dict__.get("_render_payload_started_at")
-        if (
-            not self.__dict__.get("_render_payload_in_flight", False)
-            or started_at is None
-        ):
+        if not self.__dict__.get("_render_payload_in_flight", False) or started_at is None:
             return
         if time.monotonic() - started_at >= MAP_RENDER_STALL_SECONDS:
-            self._emit_map_issue(
-                f"Karten-Renderpayload laeuft seit mehr als {MAP_RENDER_STALL_SECONDS:.0f}s"
-            )
+            self._emit_map_issue(f"Karten-Renderpayload laeuft seit mehr als {MAP_RENDER_STALL_SECONDS:.0f}s")
 
     def _on_java_script_issue(self, message: str) -> None:
         """Forward JavaScript errors from the map page to the main window."""

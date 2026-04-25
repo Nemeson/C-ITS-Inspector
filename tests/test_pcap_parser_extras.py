@@ -13,8 +13,8 @@ from pcap2kml_player.pcap_parser import (
     _safe_get,
 )
 
-
 # ---------- _safe_get ----------
+
 
 def test_safe_get_walks_nested_dict():
     obj = {"a": {"b": {"c": 42}}}
@@ -34,6 +34,7 @@ def test_safe_get_empty_dict_returns_default():
 
 
 # ---------- CAM ----------
+
 
 def test_extra_fields_cam_extracts_station_and_hf_fields():
     decoded = {
@@ -66,6 +67,7 @@ def test_extra_fields_cam_empty_returns_empty_dict():
 
 # ---------- DENM ----------
 
+
 def test_extra_fields_denm_extracts_cause_and_mgmt():
     decoded = {
         "denm": {
@@ -95,6 +97,7 @@ def test_extra_fields_denm_no_situation_container():
 
 
 # ---------- MAPEM ----------
+
 
 def test_extra_fields_mapem_extracts_intersection():
     decoded = {
@@ -181,6 +184,7 @@ def test_extra_fields_mapem_no_intersections():
 
 # ---------- SPATEM ----------
 
+
 def test_extra_fields_spatem_extracts_timing():
     decoded = {
         "spat": {
@@ -205,6 +209,7 @@ def test_extra_fields_spatem_extracts_timing():
 
 
 # ---------- SREM ----------
+
 
 def test_extra_fields_srem_extracts_request_and_requestor():
     decoded = {
@@ -240,6 +245,7 @@ def test_extra_fields_srem_empty_body():
 
 # ---------- SSEM ----------
 
+
 def test_extra_fields_ssem_extracts_status():
     decoded = {
         "ssm": {
@@ -273,6 +279,7 @@ def test_extra_fields_ssem_empty_status():
 
 # ---------- _safe_extract_extra ----------
 
+
 def test_safe_extract_extra_swallows_extractor_errors():
     # Passing a type where the extractor would raise: extractor works only on dicts
     # Use NMEA which is not in the extractor map
@@ -284,6 +291,7 @@ def test_safe_extract_extra_returns_empty_on_exception():
     class Weird:
         def get(self, *_args, **_kwargs):
             raise TypeError("boom")
+
     assert _safe_extract_extra(MessageType.CAM, Weird()) == {}
 
 
@@ -294,6 +302,7 @@ def test_safe_extract_extra_delegates_to_cam():
 
 
 # ---------- _infer_msg_type_from_pdu ----------
+
 
 def test_infer_msg_type_from_pdu_cam():
     # Protocol version 2, messageID 2 = CAM

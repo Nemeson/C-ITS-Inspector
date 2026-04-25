@@ -34,9 +34,7 @@ class ParsingWorker(QObject):
                 filename = Path(path).name
 
                 def _progress(fraction: float, *, current=index, name=filename) -> None:
-                    overall = int(
-                        ((current + max(0.0, min(1.0, fraction))) / total) * 100
-                    )
+                    overall = int(((current + max(0.0, min(1.0, fraction))) / total) * 100)
                     self.progress.emit(overall, name)
 
                 try:
@@ -56,48 +54,10 @@ class ParsingWorker(QObject):
             errors.append(str(exc))
 
         session.finalize()
-        self.finished.emit(session, self._paths, errors)
+        if not self._cancel_check_fn():
+            self.finished.emit(session, self._paths, errors)
 
     @pyqtSlot()
     def cancel(self) -> None:
         """Request cancellation atomically via closure replacement."""
         self._cancel_check_fn = lambda: True
-
-        try:
-            for index, path in enumerate(self._paths):
-                filename = Path(path).name
-
-                def _progress(fraction: float, *, current=index, name=filename) -> None:
-                    overall = int(
-                        ((current + max(0.0, min(1.0, fraction))) / total) * 100
-                    )
-                    self.progress.emit(overall, name)
-
-                try:
-                    parse_pcap(
-                        path,
-                        session,
-                        progress_callback=_progress,
-                        cancel_check=_cancel_check,
-                    )
-                    self.progress.emit(int(((index + 1) / total) * 100), filename)
-                except (FileNotFoundError, ValueError) as exc:
-                    errors.append(f"{filename}: {exc}")
-        except ParseCancelled:
-            self.cancelled.emit()
-            return
-        except Exception as exc:
-            errors.append(str(exc))
-
-        session.finalize()
-        if not _cancel_check():
-            self.finished.emit(session, self._paths, errors)
-
-    @pyqtSlot()
-    def cancel(self) -> None:
-        """Request cancellation."""
-        self._cancel_mutex.lock()
-        try:
-            self._cancel_requested = True
-        finally:
-            self._cancel_mutex.unlock()

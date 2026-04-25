@@ -42,8 +42,7 @@ def test_configure_qt_runtime_adds_directcomposition_mitigation_and_software_def
     chromium_flags = set(os.environ["QTWEBENGINE_CHROMIUM_FLAGS"].split())
     assert "--disable-direct-composition" in chromium_flags
     assert (
-        "--disable-features=DirectComposition,DirectCompositionVideoOverlays,UseHDRTransferFunction"
-        in chromium_flags
+        "--disable-features=DirectComposition,DirectCompositionVideoOverlays,UseHDRTransferFunction" in chromium_flags
     )
     assert "--disable-accelerated-video-decode" in chromium_flags
     assert "--disable-gpu-memory-buffer-video-frames" in chromium_flags
@@ -112,9 +111,9 @@ def test_configure_qt_runtime_preserves_existing_flags(monkeypatch):
     flags = os.environ["QTWEBENGINE_CHROMIUM_FLAGS"].split()
     assert flags.count("--existing-flag") == 1
     assert flags.count("--disable-direct-composition") == 1
-    assert flags.count(
-        "--disable-features=DirectComposition,DirectCompositionVideoOverlays,UseHDRTransferFunction"
-    ) == 1
+    assert (
+        flags.count("--disable-features=DirectComposition,DirectCompositionVideoOverlays,UseHDRTransferFunction") == 1
+    )
 
 
 def test_configure_qt_runtime_does_not_duplicate_path_entry(monkeypatch):

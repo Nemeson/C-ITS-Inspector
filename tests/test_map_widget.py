@@ -1,28 +1,28 @@
 """Tests for JavaScript escaping helpers in the map widget."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pcap2kml_player.data_model import MessageType, V2xMessage
 from pcap2kml_player.map_widget import (
+    LEAFLET_HTML,
     MAP_PERFORMANCE_DIAGNOSTIC,
     MAP_PERFORMANCE_NORMAL,
-    MAP_RENDER_BUDGETS,
     MAP_PERFORMANCE_SAVER,
+    MAP_RENDER_BUDGETS,
     MapWidget,
     _asset_base_path,
-    _leaflet_runtime_html,
     _display_anchor_points,
     _has_display_position,
-    _is_near_display_anchors,
     _infrastructure_overlays_for_message,
     _infrastructure_overlays_for_messages,
+    _is_near_display_anchors,
     _js_escape,
+    _leaflet_runtime_html,
     _marker_id_for_message,
     _marker_position_for_message,
     _payload_bounds,
     _spat_color_for_intersection,
-    LEAFLET_HTML,
 )
 
 
@@ -42,21 +42,21 @@ def test_js_escape_handles_problematic_sequences():
 
 def test_marker_id_for_map_and_spat_stays_separate():
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
         longitude=13.0,
     )
     spat_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.SPATEM,
         latitude=52.0,
         longitude=13.0,
     )
     cam_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 2, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 2, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.CAM,
         latitude=52.0,
@@ -69,28 +69,26 @@ def test_marker_id_for_map_and_spat_stays_separate():
 
 def test_marker_position_offsets_map_and_spat_to_keep_both_visible():
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
         longitude=13.0,
     )
     spat_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.SPATEM,
         latitude=52.0,
         longitude=13.0,
     )
 
-    assert _marker_position_for_message(map_msg) != _marker_position_for_message(
-        spat_msg
-    )
+    assert _marker_position_for_message(map_msg) != _marker_position_for_message(spat_msg)
 
 
 def test_has_display_position_rejects_null_island_sentinel():
     msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="denm-rsu",
         msg_type=MessageType.DENM,
         latitude=0.0,
@@ -102,7 +100,7 @@ def test_has_display_position_rejects_null_island_sentinel():
 
 def test_infrastructure_overlays_create_raw_circle_for_undecoded_map_message():
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -122,7 +120,7 @@ def test_infrastructure_overlays_create_raw_circle_for_undecoded_map_message():
 
 def test_infrastructure_overlays_create_lane_polylines_for_decoded_map_geometry():
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -158,14 +156,8 @@ def test_infrastructure_overlays_create_lane_polylines_for_decoded_map_geometry(
 
     assert any(overlay["kind"] == "circle" for overlay in overlays)
     assert any(overlay["kind"] == "polyline" for overlay in overlays)
-    assert any(
-        overlay["kind"] == "polyline" and overlay["layer"] == "map_stoplines"
-        for overlay in overlays
-    )
-    assert any(
-        overlay["kind"] == "label" and overlay["text"] == "Lane 17"
-        for overlay in overlays
-    )
+    assert any(overlay["kind"] == "polyline" and overlay["layer"] == "map_stoplines" for overlay in overlays)
+    assert any(overlay["kind"] == "label" and overlay["text"] == "Lane 17" for overlay in overlays)
 
 
 def test_spat_color_for_intersection_uses_decoded_phase_state():
@@ -185,7 +177,7 @@ def test_spat_color_for_intersection_uses_decoded_phase_state():
 
 def test_infrastructure_overlays_create_spat_label_and_phase_color():
     spat_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.SPATEM,
         latitude=52.0,
@@ -225,7 +217,7 @@ def test_infrastructure_overlays_create_spat_label_and_phase_color():
 
 def test_infrastructure_overlays_for_messages_colors_connection_by_matching_spat_group():
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -263,7 +255,7 @@ def test_infrastructure_overlays_for_messages_colors_connection_by_matching_spat
         },
     )
     spat_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.SPATEM,
         latitude=52.0,
@@ -294,20 +286,12 @@ def test_infrastructure_overlays_for_messages_colors_connection_by_matching_spat
     overlays = _infrastructure_overlays_for_messages([map_msg, spat_msg])
 
     inbound_lane_overlay = next(
-        overlay
-        for overlay in overlays
-        if overlay["kind"] == "polyline" and overlay["layer"] == "map_inbound"
+        overlay for overlay in overlays if overlay["kind"] == "polyline" and overlay["layer"] == "map_inbound"
     )
     connection_overlay = next(
-        overlay
-        for overlay in overlays
-        if overlay["kind"] == "polyline" and overlay["layer"] == "map_connections"
+        overlay for overlay in overlays if overlay["kind"] == "polyline" and overlay["layer"] == "map_connections"
     )
-    lane_label = next(
-        overlay
-        for overlay in overlays
-        if overlay["kind"] == "label" and "Lane 17" in overlay["text"]
-    )
+    lane_label = next(overlay for overlay in overlays if overlay["kind"] == "label" and "Lane 17" in overlay["text"])
     assert inbound_lane_overlay["color"] == "#0f766e"
     assert connection_overlay["color"] == "#dc2626"
     assert "SG 5" in connection_overlay["popup"]
@@ -319,7 +303,7 @@ def test_infrastructure_overlays_for_messages_colors_connection_by_matching_spat
 
 def test_infrastructure_overlays_for_messages_create_stopline_layer_for_inbound_lane():
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -355,9 +339,7 @@ def test_infrastructure_overlays_for_messages_create_stopline_layer_for_inbound_
     overlays = _infrastructure_overlays_for_messages([map_msg])
 
     stopline_overlay = next(
-        overlay
-        for overlay in overlays
-        if overlay["kind"] == "polyline" and overlay["layer"] == "map_stoplines"
+        overlay for overlay in overlays if overlay["kind"] == "polyline" and overlay["layer"] == "map_stoplines"
     )
 
     assert stopline_overlay["color"] == "#f97316"
@@ -366,7 +348,7 @@ def test_infrastructure_overlays_for_messages_create_stopline_layer_for_inbound_
 
 def test_infrastructure_overlays_for_messages_create_request_overlays_for_lane_and_connection():
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -406,7 +388,7 @@ def test_infrastructure_overlays_for_messages_create_request_overlays_for_lane_a
         },
     )
     spat_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.SPATEM,
         latitude=52.0,
@@ -426,7 +408,7 @@ def test_infrastructure_overlays_for_messages_create_request_overlays_for_lane_a
         },
     )
     dominant_request = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 2, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 2, tzinfo=UTC),
         station_id="bus-1",
         msg_type=MessageType.SREM,
         latitude=52.0,
@@ -441,7 +423,7 @@ def test_infrastructure_overlays_for_messages_create_request_overlays_for_lane_a
         },
     )
     secondary_request = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 2, 500000, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 2, 500000, tzinfo=UTC),
         station_id="tram-2",
         msg_type=MessageType.SREM,
         latitude=52.0,
@@ -456,7 +438,7 @@ def test_infrastructure_overlays_for_messages_create_request_overlays_for_lane_a
         },
     )
     ssem_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 3, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 3, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.SSEM,
         latitude=52.0,
@@ -469,37 +451,19 @@ def test_infrastructure_overlays_for_messages_create_request_overlays_for_lane_a
         },
     )
 
-    overlays = _infrastructure_overlays_for_messages(
-        [map_msg, spat_msg, dominant_request, secondary_request, ssem_msg]
-    )
+    overlays = _infrastructure_overlays_for_messages([map_msg, spat_msg, dominant_request, secondary_request, ssem_msg])
 
     request_overlays = [
-        overlay
-        for overlay in overlays
-        if overlay["kind"] == "polyline" and overlay["layer"] == "map_requests"
+        overlay for overlay in overlays if overlay["kind"] == "polyline" and overlay["layer"] == "map_requests"
     ]
 
     assert request_overlays
-    assert any(
-        overlay["weight"] == 6 and overlay["color"] == "#16a34a"
-        for overlay in request_overlays
-    )
-    assert any(
-        overlay["weight"] == 4 and overlay["dashArray"] == "6 6"
-        for overlay in request_overlays
-    )
-    assert any(
-        "Priorisierung" in overlay["popup"] and "granted" in overlay["popup"]
-        for overlay in request_overlays
-    )
-    connection_request_overlays = [
-        overlay for overlay in request_overlays if "connection" in overlay["id"]
-    ]
+    assert any(overlay["weight"] == 6 and overlay["color"] == "#16a34a" for overlay in request_overlays)
+    assert any(overlay["weight"] == 4 and overlay["dashArray"] == "6 6" for overlay in request_overlays)
+    assert any("Priorisierung" in overlay["popup"] and "granted" in overlay["popup"] for overlay in request_overlays)
+    connection_request_overlays = [overlay for overlay in request_overlays if "connection" in overlay["id"]]
     assert len(connection_request_overlays) >= 2
-    assert (
-        connection_request_overlays[0]["coords"]
-        != connection_request_overlays[1]["coords"]
-    )
+    assert connection_request_overlays[0]["coords"] != connection_request_overlays[1]["coords"]
 
 
 def test_leaflet_html_exposes_layer_toggles_and_label_renderer():
@@ -598,11 +562,7 @@ class _NoSliceMessages(list):
 
 
 def _render_payload(captured_scripts: list[str]) -> dict:
-    script = next(
-        script
-        for script in captured_scripts
-        if script.startswith("applyRenderPayload(")
-    )
+    script = next(script for script in captured_scripts if script.startswith("applyRenderPayload("))
     return json.loads(script.removeprefix("applyRenderPayload(").removesuffix(")"))
 
 
@@ -628,9 +588,7 @@ def test_run_js_queues_until_map_page_is_loaded():
 def test_bootstrap_probe_false_emits_map_issue():
     widget = MapWidget.__new__(MapWidget)
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._on_bootstrap_probe_finished(False)
 
@@ -640,9 +598,7 @@ def test_bootstrap_probe_false_emits_map_issue():
 def test_bootstrap_probe_none_emits_verification_issue():
     widget = MapWidget.__new__(MapWidget)
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._on_bootstrap_probe_finished(None)
 
@@ -654,9 +610,7 @@ def test_bootstrap_timeout_emits_map_issue():
     widget._bootstrap_generation = 3
     widget._page_ready = False
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._check_bootstrap_timeout(3)
 
@@ -668,9 +622,7 @@ def test_bootstrap_timeout_ignores_stale_generation():
     widget._bootstrap_generation = 4
     widget._page_ready = False
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._check_bootstrap_timeout(3)
 
@@ -683,9 +635,7 @@ def test_load_finished_false_emits_map_load_issue():
     widget._render_payload_in_flight = True
     widget._queued_render_payload_script = "applyRenderPayload({})"
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._on_load_finished(False)
 
@@ -734,7 +684,7 @@ def test_load_messages_handles_label_overlays_without_popup(monkeypatch):
     widget._station_index = 0
 
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -782,7 +732,7 @@ def test_load_messages_does_not_render_markers_for_map_or_spat(monkeypatch):
     widget._station_index = 0
 
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-map",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -790,7 +740,7 @@ def test_load_messages_does_not_render_markers_for_map_or_spat(monkeypatch):
         decoded_data={},
     )
     spat_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="rsu-spat",
         msg_type=MessageType.SPATEM,
         latitude=52.0,
@@ -819,7 +769,7 @@ def test_load_messages_does_not_render_station_marker_for_ssem(monkeypatch):
     widget._station_index = 0
 
     ssem_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-ssem",
         msg_type=MessageType.SSEM,
         latitude=52.0,
@@ -848,14 +798,14 @@ def test_render_playback_slice_uses_only_messages_up_to_current_index(monkeypatc
     widget._station_index = 0
 
     cam1 = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="car-1",
         msg_type=MessageType.CAM,
         latitude=52.0,
         longitude=13.0,
     )
     cam2 = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="car-1",
         msg_type=MessageType.CAM,
         latitude=52.1,
@@ -890,7 +840,7 @@ def test_render_playback_slice_limits_trail_to_recent_points(monkeypatch):
 
     messages = [
         V2xMessage(
-            timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=UTC),
             station_id="car-1",
             msg_type=MessageType.CAM,
             latitude=52.0 + (index / 1000.0),
@@ -923,7 +873,7 @@ def test_render_playback_slice_does_not_copy_growing_message_prefix(monkeypatch)
     messages = _NoSliceMessages(
         [
             V2xMessage(
-                timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=UTC),
                 station_id="car-1",
                 msg_type=MessageType.CAM,
                 latitude=52.0 + (index / 1000.0),
@@ -955,7 +905,7 @@ def test_render_playback_slice_applies_time_window(monkeypatch):
     widget._performance_mode = MAP_PERFORMANCE_SAVER
     messages = [
         V2xMessage(
-            timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=UTC),
             station_id="car-1",
             msg_type=MessageType.CAM,
             latitude=52.0 + (index / 1000.0),
@@ -988,7 +938,7 @@ def test_diagnostic_mode_keeps_short_trajectories(monkeypatch):
     widget._performance_mode = MAP_PERFORMANCE_DIAGNOSTIC
     messages = [
         V2xMessage(
-            timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 4, 18, 12, 0, index, tzinfo=UTC),
             station_id="car-1",
             msg_type=MessageType.CAM,
             latitude=52.0 + (index / 1000.0),
@@ -1019,7 +969,7 @@ def test_diagnostic_mode_keeps_essential_infrastructure_layers(monkeypatch):
     widget._station_index = 0
     widget._performance_mode = MAP_PERFORMANCE_DIAGNOSTIC
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-1",
         msg_type=MessageType.MAPEM,
         latitude=52.0,
@@ -1088,7 +1038,7 @@ def test_render_payload_budget_caps_markers_and_records_telemetry(monkeypatch):
     marker_budget = MAP_RENDER_BUDGETS[MAP_PERFORMANCE_NORMAL]["markers"]
     messages = [
         V2xMessage(
-            timestamp=datetime(2026, 4, 18, 12, 0, index % 60, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 4, 18, 12, 0, index % 60, tzinfo=UTC),
             station_id=f"car-{index}",
             msg_type=MessageType.CAM,
             latitude=52.0 + (index / 100000.0),
@@ -1138,7 +1088,7 @@ def test_update_playback_position_follows_selected_station(monkeypatch):
     widget._follow_station_id = "car-1"
 
     msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="car-1",
         msg_type=MessageType.CAM,
         latitude=52.0,
@@ -1147,9 +1097,7 @@ def test_update_playback_position_follows_selected_station(monkeypatch):
 
     widget.update_playback_position(msg)
 
-    assert any(
-        "highlightMarker('station_car-1')" in script for script in captured_scripts
-    )
+    assert any("highlightMarker('station_car-1')" in script for script in captured_scripts)
     assert any("followMarker('station_car-1')" in script for script in captured_scripts)
 
 
@@ -1167,7 +1115,7 @@ def test_load_messages_clears_before_full_reload(monkeypatch):
     widget._station_index = 0
 
     cam_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="car-1",
         msg_type=MessageType.CAM,
         latitude=52.0,
@@ -1193,14 +1141,14 @@ def test_load_messages_skips_null_island_markers(monkeypatch):
     widget._station_index = 0
 
     null_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="bad-denm",
         msg_type=MessageType.DENM,
         latitude=0.0,
         longitude=0.0,
     )
     good_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="good-cam",
         msg_type=MessageType.CAM,
         latitude=48.894068,
@@ -1231,24 +1179,22 @@ def test_load_messages_skips_far_outliers_when_infrastructure_anchor_exists(
     widget._station_index = 0
 
     map_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC),
         station_id="rsu-map",
         msg_type=MessageType.MAPEM,
         latitude=48.894068,
         longitude=9.208135,
-        decoded_data={
-            "intersections": [{"refPoint": {"lat": 48.894068, "lon": 9.208135}}]
-        },
+        decoded_data={"intersections": [{"refPoint": {"lat": 48.894068, "lon": 9.208135}}]},
     )
     outlier_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 1, tzinfo=UTC),
         station_id="bad-denm",
         msg_type=MessageType.DENM,
         latitude=10.745933,
         longitude=-53.4697692,
     )
     local_msg = V2xMessage(
-        timestamp=datetime(2026, 4, 18, 12, 0, 2, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 18, 12, 0, 2, tzinfo=UTC),
         station_id="local-cam",
         msg_type=MessageType.CAM,
         latitude=48.8941,
@@ -1292,9 +1238,7 @@ def test_bootstrap_timeout_fires_even_when_page_loaded():
     widget._bootstrap_probe_succeeded = False  # probe never returned True
     widget._ever_bootstrapped = False
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._check_bootstrap_timeout(1)
 
@@ -1307,9 +1251,7 @@ def test_bootstrap_timeout_silent_after_probe_succeeded():
     widget._bootstrap_generation = 1
     widget._bootstrap_probe_succeeded = True
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._check_bootstrap_timeout(1)
 
@@ -1324,9 +1266,7 @@ def test_bootstrap_timeout_silent_after_any_previous_success():
     widget._ever_bootstrapped = True
     widget._page_ready = False
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._check_bootstrap_timeout(1)
 
@@ -1374,9 +1314,7 @@ def test_dispose_cancels_pending_render_callbacks():
 def test_execute_js_marks_widget_disposed_when_qt_object_was_deleted():
     class DeletedPage:
         def runJavaScript(self, *_args):
-            raise RuntimeError(
-                "wrapped C/C++ object of type MapWidget has been deleted"
-            )
+            raise RuntimeError("wrapped C/C++ object of type MapWidget has been deleted")
 
     widget = MapWidget.__new__(MapWidget)
     widget._disposed = False
@@ -1399,9 +1337,7 @@ def test_render_process_terminated_emits_map_issue():
     widget._bootstrap_probe_succeeded = True
     widget._page_ready = True
     issues: list[str] = []
-    widget.map_issue_detected = type(
-        "Signal", (), {"emit": lambda self, msg: issues.append(msg)}
-    )()
+    widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
     widget._on_render_process_terminated("NormalTerminationStatus", 0)
 

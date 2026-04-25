@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
@@ -21,10 +20,10 @@ class EtaSelection:
     key: str
     label: str
     station_id: str
-    intersection_id: Optional[int] = None
-    request_id: Optional[int] = None
-    sequence_number: Optional[int] = None
-    merge_group_id: Optional[str] = None
+    intersection_id: int | None = None
+    request_id: int | None = None
+    sequence_number: int | None = None
+    merge_group_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,7 +33,7 @@ class EtaPoint:
     timestamp: datetime
     relative_seconds: float
     remaining_seconds: float
-    error_seconds: Optional[float]
+    error_seconds: float | None
     label: str
 
 
@@ -86,7 +85,7 @@ class EtaDashboardData:
     """Operator-facing table data for the selected ETA track."""
 
     metrics: list[tuple[str, str]]
-    events: list["EtaDashboardEvent"]
+    events: list[EtaDashboardEvent]
 
 
 @dataclass(frozen=True)
@@ -98,8 +97,8 @@ class EtaDashboardEvent:
     content: str
     details: str
     timestamp: datetime
-    message_type: Optional[MessageType]
-    selection_key: Optional[str]
+    message_type: MessageType | None
+    selection_key: str | None
 
 
 class EtaGraphWidget(QWidget):
@@ -108,10 +107,10 @@ class EtaGraphWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._messages: list[V2xMessage] = []
-        self._selection_key: Optional[str] = None
-        self._selection: Optional[EtaSelection] = None
-        self._current_time: Optional[datetime] = None
-        self._start_time: Optional[datetime] = None
+        self._selection_key: str | None = None
+        self._selection: EtaSelection | None = None
+        self._current_time: datetime | None = None
+        self._start_time: datetime | None = None
         self._eta_points: list[EtaPoint] = []
         self._speed_points: list[SpeedPoint] = []
         self._events: list[RequestEvent] = []
@@ -125,16 +124,16 @@ class EtaGraphWidget(QWidget):
         self._messages = messages
         self._rebuild_series()
 
-    def set_selection(self, selection_key: Optional[str]) -> None:
+    def set_selection(self, selection_key: str | None) -> None:
         """Select the request/merge track to render."""
         self._selection_key = selection_key
         self._rebuild_series()
 
-    def set_station(self, station_id: Optional[str]) -> None:
+    def set_station(self, station_id: str | None) -> None:
         """Backward-compatible station fallback used by older callers/tests."""
         self.set_selection(f"STATION:{station_id}" if station_id else None)
 
-    def set_current_time(self, timestamp: Optional[datetime]) -> None:
+    def set_current_time(self, timestamp: datetime | None) -> None:
         """Move the playback cursor."""
         self._current_time = timestamp
         self.update()
@@ -165,11 +164,7 @@ class EtaGraphWidget(QWidget):
                 events=[],
             )
 
-        eta_errors = [
-            abs(point.error_seconds)
-            for point in self._eta_points
-            if point.error_seconds is not None
-        ]
+        eta_errors = [abs(point.error_seconds) for point in self._eta_points if point.error_seconds is not None]
         speed_values = [point.speed_mps for point in self._speed_points]
         status_values = [band.status for band in self._status_bands]
         metrics = [
@@ -187,35 +182,41 @@ class EtaGraphWidget(QWidget):
 
         rows: list[EtaDashboardEvent] = []
         for event in self._events:
-            rows.append(EtaDashboardEvent(
-                time_text=_format_time(event.timestamp),
-                kind=event.kind,
-                content=event.label,
-                details="",
-                timestamp=event.timestamp,
-                message_type=MessageType.SREM,
-                selection_key=self._selection.key,
-            ))
+            rows.append(
+                EtaDashboardEvent(
+                    time_text=_format_time(event.timestamp),
+                    kind=event.kind,
+                    content=event.label,
+                    details="",
+                    timestamp=event.timestamp,
+                    message_type=MessageType.SREM,
+                    selection_key=self._selection.key,
+                )
+            )
         for band in self._status_bands:
-            rows.append(EtaDashboardEvent(
-                time_text=_format_time(band.start),
-                kind="SSEM",
-                content=band.status,
-                details=band.label,
-                timestamp=band.start,
-                message_type=MessageType.SSEM,
-                selection_key=self._selection.key,
-            ))
+            rows.append(
+                EtaDashboardEvent(
+                    time_text=_format_time(band.start),
+                    kind="SSEM",
+                    content=band.status,
+                    details=band.label,
+                    timestamp=band.start,
+                    message_type=MessageType.SSEM,
+                    selection_key=self._selection.key,
+                )
+            )
         for diagnostic in self._diagnostics:
-            rows.append(EtaDashboardEvent(
-                time_text=_format_time(diagnostic.timestamp),
-                kind="Diagnose",
-                content=diagnostic.label,
-                details="",
-                timestamp=diagnostic.timestamp,
-                message_type=None,
-                selection_key=self._selection.key,
-            ))
+            rows.append(
+                EtaDashboardEvent(
+                    time_text=_format_time(diagnostic.timestamp),
+                    kind="Diagnose",
+                    content=diagnostic.label,
+                    details="",
+                    timestamp=diagnostic.timestamp,
+                    message_type=None,
+                    selection_key=self._selection.key,
+                )
+            )
         rows.sort(key=lambda row: row.timestamp)
         return EtaDashboardData(metrics=metrics, events=rows)
 
@@ -280,7 +281,9 @@ class EtaGraphWidget(QWidget):
         speed_messages = [
             msg
             for msg in self._messages
-            if msg.station_id == self._selection.station_id and msg.speed is not None and msg.timestamp >= self._start_time
+            if msg.station_id == self._selection.station_id
+            and msg.speed is not None
+            and msg.timestamp >= self._start_time
         ]
         self._speed_points = _smooth_speed_points(speed_messages, self._start_time)
 
@@ -388,7 +391,13 @@ class EtaGraphWidget(QWidget):
             painter.drawText(QPointF(x + 4, plot.bottom() - 8), request_event.label[:32])
 
     def _draw_eta_series(self, painter: QPainter, plot: QRectF, duration: float, eta_max: float) -> None:
-        points = [QPointF(_x_for_relative(point.relative_seconds, duration, plot), _y_for_value(point.remaining_seconds, eta_max, plot)) for point in self._eta_points]
+        points = [
+            QPointF(
+                _x_for_relative(point.relative_seconds, duration, plot),
+                _y_for_value(point.remaining_seconds, eta_max, plot),
+            )
+            for point in self._eta_points
+        ]
         self._draw_polyline_or_points(painter, points, QColor("#2563eb"), 2.8)
         painter.setFont(QFont("Segoe UI", 8))
         for eta_point, draw_point in zip(self._eta_points, points):
@@ -399,7 +408,12 @@ class EtaGraphWidget(QWidget):
             painter.drawText(QPointF(draw_point.x() + 5, draw_point.y() - 5), f"{eta_point.error_seconds:+.1f}s")
 
     def _draw_speed_series(self, painter: QPainter, plot: QRectF, duration: float, speed_max: float) -> None:
-        points = [QPointF(_x_for_relative(point.relative_seconds, duration, plot), _y_for_value(point.speed_mps, speed_max, plot)) for point in self._speed_points]
+        points = [
+            QPointF(
+                _x_for_relative(point.relative_seconds, duration, plot), _y_for_value(point.speed_mps, speed_max, plot)
+            )
+            for point in self._speed_points
+        ]
         self._draw_polyline_or_points(painter, points, QColor("#16a34a"), 2.0)
 
     def _draw_diagnostics(self, painter: QPainter, plot: QRectF, diagnosis_y: float, duration: float) -> None:
@@ -469,14 +483,34 @@ def build_eta_selection_options(messages: list[V2xMessage]) -> list[EtaSelection
         key = _request_selection_key(intersection_id, request_id, sequence_number, msg.station_id, msg.merge_group_id)
         merge_text = f" | Merge {msg.merge_group_id}" if msg.merge_group_id else ""
         label = f"I{intersection_id} R{request_id}/S{sequence_number} | {msg.station_id}{merge_text}"
-        selections.setdefault(key, EtaSelection(key, label, msg.station_id, intersection_id, request_id, sequence_number, msg.merge_group_id))
+        selections.setdefault(
+            key,
+            EtaSelection(key, label, msg.station_id, intersection_id, request_id, sequence_number, msg.merge_group_id),
+        )
     if selections:
-        return sorted(selections.values(), key=lambda item: (item.intersection_id or 0, item.request_id or 0, item.sequence_number or 0, item.station_id))
-    station_ids = sorted({msg.station_id for msg in messages if msg.msg_type in {MessageType.CAM, MessageType.NMEA} or msg.speed is not None})
-    return [EtaSelection(key=f"STATION:{station_id}", label=f"Station {station_id}", station_id=station_id) for station_id in station_ids]
+        return sorted(
+            selections.values(),
+            key=lambda item: (
+                item.intersection_id or 0,
+                item.request_id or 0,
+                item.sequence_number or 0,
+                item.station_id,
+            ),
+        )
+    station_ids = sorted(
+        {
+            msg.station_id
+            for msg in messages
+            if msg.msg_type in {MessageType.CAM, MessageType.NMEA} or msg.speed is not None
+        }
+    )
+    return [
+        EtaSelection(key=f"STATION:{station_id}", label=f"Station {station_id}", station_id=station_id)
+        for station_id in station_ids
+    ]
 
 
-def _selection_for_key(selection_key: Optional[str], messages: list[V2xMessage]) -> Optional[EtaSelection]:
+def _selection_for_key(selection_key: str | None, messages: list[V2xMessage]) -> EtaSelection | None:
     if selection_key is None:
         options = build_eta_selection_options(messages)
         return options[0] if options else None
@@ -513,7 +547,9 @@ def _matches_ssem(msg: V2xMessage, selection: EtaSelection) -> bool:
     )
 
 
-def _request_selection_key(intersection_id: int, request_id: int, sequence_number: int, station_id: str, merge_group_id: Optional[str]) -> str:
+def _request_selection_key(
+    intersection_id: int, request_id: int, sequence_number: int, station_id: str, merge_group_id: str | None
+) -> str:
     merge_token = merge_group_id or "raw"
     return f"REQ:{intersection_id}:{request_id}:{sequence_number}:{station_id}:{merge_token}"
 
@@ -527,7 +563,9 @@ def _smooth_speed_points(messages: list[V2xMessage], start_time: datetime, windo
             continue
         speeds.append(float(msg.speed))
         sample = speeds[-window:]
-        result.append(SpeedPoint(msg.timestamp, _relative_seconds(msg.timestamp, start_time), sum(sample) / len(sample)))
+        result.append(
+            SpeedPoint(msg.timestamp, _relative_seconds(msg.timestamp, start_time), sum(sample) / len(sample))
+        )
     return result
 
 
@@ -539,11 +577,30 @@ def _build_status_bands(messages: list[V2xMessage], start_time: datetime, end_ti
         next_time = ordered[index + 1].timestamp if index + 1 < len(ordered) else end_time
         if next_time <= msg.timestamp:
             next_time = msg.timestamp + timedelta(milliseconds=250)
-        bands.append(StatusBand(msg.timestamp, next_time, _relative_seconds(msg.timestamp, start_time), _relative_seconds(next_time, start_time), status, f"SSEM {status}", _status_color(status)))
+        bands.append(
+            StatusBand(
+                msg.timestamp,
+                next_time,
+                _relative_seconds(msg.timestamp, start_time),
+                _relative_seconds(next_time, start_time),
+                status,
+                f"SSEM {status}",
+                _status_color(status),
+            )
+        )
     return bands
 
 
-def _detect_diagnostics(*, eta_points: list[EtaPoint], srem_messages: list[V2xMessage], ssem_events: list[V2xMessage], status_bands: list[StatusBand], scene, selection: EtaSelection, start_time: datetime) -> list[DiagnosticItem]:
+def _detect_diagnostics(
+    *,
+    eta_points: list[EtaPoint],
+    srem_messages: list[V2xMessage],
+    ssem_events: list[V2xMessage],
+    status_bands: list[StatusBand],
+    scene,
+    selection: EtaSelection,
+    start_time: datetime,
+) -> list[DiagnosticItem]:
     diagnostics: list[DiagnosticItem] = []
     ordered_eta = sorted(eta_points, key=lambda point: point.timestamp)
     for previous, current in zip(ordered_eta, ordered_eta[1:]):
@@ -565,8 +622,12 @@ def _detect_diagnostics(*, eta_points: list[EtaPoint], srem_messages: list[V2xMe
         if not _verification_matches(verification, selection):
             continue
         if not verification.is_accurate:
-            diagnostics.append(_diagnostic(verification.actual_arrival, start_time, f"ETA-Fehler {verification.delta_seconds:+.1f}s"))
-        if not any(band.start <= verification.actual_arrival and _is_granted_status(band.status) for band in granted_bands):
+            diagnostics.append(
+                _diagnostic(verification.actual_arrival, start_time, f"ETA-Fehler {verification.delta_seconds:+.1f}s")
+            )
+        if not any(
+            band.start <= verification.actual_arrival and _is_granted_status(band.status) for band in granted_bands
+        ):
             diagnostics.append(_diagnostic(verification.actual_arrival, start_time, "Stopline ohne granted passiert"))
     if not eta_points and srem_messages:
         diagnostics.append(_diagnostic(srem_messages[0].timestamp, start_time, "SREM ohne verwertbare ETA"))
@@ -606,13 +667,13 @@ def _format_time(timestamp: datetime) -> str:
     return timestamp.strftime("%H:%M:%S.%f")[:-3]
 
 
-def _request_label(kind: str, request_id: Optional[int], sequence_number: Optional[int]) -> str:
+def _request_label(kind: str, request_id: int | None, sequence_number: int | None) -> str:
     if request_id is None or sequence_number is None:
         return kind
     return f"{kind} {request_id}/{sequence_number}"
 
 
-def _coerce_int(value: object) -> Optional[int]:
+def _coerce_int(value: object) -> int | None:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -634,7 +695,7 @@ def _coerce_int(value: object) -> Optional[int]:
     return None
 
 
-def _coerce_eta_datetime(value: object, reference_time: datetime) -> Optional[datetime]:
+def _coerce_eta_datetime(value: object, reference_time: datetime) -> datetime | None:
     if isinstance(value, datetime):
         return value
     if not isinstance(value, dict):
@@ -644,14 +705,14 @@ def _coerce_eta_datetime(value: object, reference_time: datetime) -> Optional[da
         return None
     if second_of_minute > 60:
         second_of_minute /= 1000.0
-    base = reference_time.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    base = reference_time.astimezone(UTC).replace(second=0, microsecond=0)
     candidate = base + timedelta(seconds=second_of_minute)
     if candidate < reference_time - timedelta(seconds=30):
         candidate += timedelta(minutes=1)
     return candidate
 
 
-def _first_number(*values: object) -> Optional[float]:
+def _first_number(*values: object) -> float | None:
     for value in values:
         if isinstance(value, (int, float)):
             return float(value)

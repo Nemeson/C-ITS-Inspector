@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 
 class MessageType(Enum):
@@ -56,8 +55,8 @@ class MessageSource:
     filename: str
     source_index: int
     role: CaptureRole = CaptureRole.UNKNOWN
-    parser_backend: Optional[str] = None
-    packet_index: Optional[int] = None
+    parser_backend: str | None = None
+    packet_index: int | None = None
 
     def display_name(self) -> str:
         """Return compact source text for tables, details, and exports."""
@@ -85,17 +84,17 @@ class V2xMessage:
     msg_type: MessageType
     latitude: float
     longitude: float
-    altitude: Optional[float] = None
-    speed: Optional[float] = None
-    heading: Optional[float] = None
-    raw_payload: Optional[bytes] = None
+    altitude: float | None = None
+    speed: float | None = None
+    heading: float | None = None
+    raw_payload: bytes | None = None
     details: dict[str, str] = field(default_factory=dict)
-    security_info: Optional[SecurityInfo] = None
+    security_info: SecurityInfo | None = None
     decoded_data: dict = field(default_factory=dict)
-    source: Optional[MessageSource] = None
-    merge_group_id: Optional[str] = None
-    merge_confidence: Optional[float] = None
-    merge_reason: Optional[str] = None
+    source: MessageSource | None = None
+    merge_group_id: str | None = None
+    merge_confidence: float | None = None
+    merge_reason: str | None = None
     """Structured fields extracted from the ASN.1-decoded ITS PDU.
 
     Message-type-specific keys (Phase 2.1 — ETSI TS 103 301 / EN 302 637):
@@ -121,11 +120,7 @@ class V2xMessage:
         if self.merge_group_id:
             parts.append(
                 f"<b>Merge:</b> {self.merge_group_id}"
-                + (
-                    f" ({self.merge_confidence:.2f})"
-                    if self.merge_confidence is not None
-                    else ""
-                )
+                + (f" ({self.merge_confidence:.2f})" if self.merge_confidence is not None else "")
             )
         if self.altitude is not None:
             parts.append(f"<b>Altitude:</b> {self.altitude:.1f} m")
@@ -182,49 +177,49 @@ class SecurityInfo:
     """
 
     # Security envelope
-    protocol_version: Optional[int] = None
+    protocol_version: int | None = None
     """ITS Security protocol version (2 = current)."""
-    security_profile: Optional[str] = None
+    security_profile: str | None = None
     """Security profile: 'unsecured', 'signed', 'signed_encrypted', 'signed_encrypted_auth'."""
 
     # Signer information
-    signer_type: Optional[str] = None
+    signer_type: str | None = None
     """How the signer is identified: 'self', 'digest', 'certificate_chain'."""
-    signer_digest: Optional[str] = None
+    signer_digest: str | None = None
     """SHA-256 digest of the signing certificate (hex string)."""
-    certificate_issuer: Optional[str] = None
+    certificate_issuer: str | None = None
     """Issuer of the signing certificate."""
-    certificate_subject_type: Optional[str] = None
+    certificate_subject_type: str | None = None
     """Subject type: 'CA', 'subscriber', 'enrollment_CA'."""
 
     # Certificate validity
-    validity_start: Optional[str] = None
+    validity_start: str | None = None
     """Certificate validity start (ISO 8601 or 'Not available')."""
-    validity_end: Optional[str] = None
+    validity_end: str | None = None
     """Certificate validity end (ISO 8601 or 'Not available')."""
 
     # Signature
-    signature_algorithm: Optional[str] = None
+    signature_algorithm: str | None = None
     """ECDSA curve: 'NIST P-256' or 'BrainpoolP256r1'."""
-    signature_r: Optional[str] = None
+    signature_r: str | None = None
     """Signature R value (hex, first 16 bytes)."""
-    signature_s: Optional[str] = None
+    signature_s: str | None = None
     """Signature S value (hex, first 16 bytes)."""
 
     # Subject attributes
-    assurance_level: Optional[int] = None
+    assurance_level: int | None = None
     """Assurance level (0-7) per ETSI TS 102 941."""
-    station_type: Optional[str] = None
+    station_type: str | None = None
     """Station type from certificate (e.g. 'passengerCar', 'roadSideUnit')."""
-    its_aid_list: Optional[list[int]] = None
+    its_aid_list: list[int] | None = None
     """ITS Application Identifiers the certificate is authorized for."""
-    ssp_permissions: Optional[str] = None
+    ssp_permissions: str | None = None
     """Service Specific Permissions (hex or human-readable)."""
 
     # Geographic scope
-    region_type: Optional[str] = None
+    region_type: str | None = None
     """Geographic validity: 'none', 'circular', 'rectangular', 'polygonal', 'country'."""
-    region_detail: Optional[str] = None
+    region_detail: str | None = None
     """Region description (e.g. 'Germany (DE)' or lat/lon coordinates)."""
 
     def to_table_rows(self) -> list[tuple[str, str]]:
@@ -232,9 +227,7 @@ class SecurityInfo:
         rows = [
             (
                 "Protokollversion",
-                str(self.protocol_version)
-                if self.protocol_version is not None
-                else "—",
+                str(self.protocol_version) if self.protocol_version is not None else "—",
             ),
             ("Sicherheitsprofil", self.security_profile or "—"),
             ("Signer-Typ", self.signer_type or "—"),
@@ -253,9 +246,7 @@ class SecurityInfo:
             ("Stations-Typ", self.station_type or "—"),
             (
                 "ITS-AIDs",
-                ", ".join(str(a) for a in self.its_aid_list)
-                if self.its_aid_list
-                else "—",
+                ", ".join(str(a) for a in self.its_aid_list) if self.its_aid_list else "—",
             ),
             ("SSP-Berechtigungen", self.ssp_permissions or "—"),
             ("Regionstyp", self.region_type or "—"),
@@ -295,13 +286,9 @@ class SessionData:
         """Add a message and update indices."""
         self.messages.append(msg)
         self.station_ids.add(msg.station_id)
-        self.msg_type_counts[msg.msg_type] = (
-            self.msg_type_counts.get(msg.msg_type, 0) + 1
-        )
+        self.msg_type_counts[msg.msg_type] = self.msg_type_counts.get(msg.msg_type, 0) + 1
 
-    def register_source(
-        self, path: str, role: CaptureRole, message_count: int
-    ) -> CaptureSource:
+    def register_source(self, path: str, role: CaptureRole, message_count: int) -> CaptureSource:
         """Register or update metadata for one capture source."""
         normalized = str(Path(path).resolve())
         for source in self.sources:
@@ -362,11 +349,7 @@ class SessionData:
     ) -> list[V2xMessage]:
         """Return messages matching the given type and station filters."""
         messages = self.canonical_messages() if canonical else self.messages
-        return [
-            m
-            for m in messages
-            if m.msg_type in active_types and m.station_id in active_stations
-        ]
+        return [m for m in messages if m.msg_type in active_types and m.station_id in active_stations]
 
 
 def infer_capture_role(path: str) -> CaptureRole:

@@ -18,12 +18,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import pickle
+import shutil
 import subprocess
 import tempfile
 from collections import Counter
 from pathlib import Path
-import shutil
-from typing import Optional
 
 try:
     import asn1tools
@@ -120,6 +119,7 @@ def get_schema_versions() -> dict[str, str]:
     markers ("V1.4.1", "V2.2.1" ...). Used for KML provenance (Phase 2.2).
     """
     import re
+
     version_re = re.compile(r"V\d+\.\d+\.\d+")
     versions: dict[str, str] = {}
     if not SCHEMAS_DIR.exists():
@@ -309,7 +309,7 @@ def _invalidate_schema_caches() -> None:
             logger.debug("Could not remove schema cache %s: %s", cache_path.name, exc)
 
 
-def get_compiled_schema(msg_type: str) -> Optional[object]:
+def get_compiled_schema(msg_type: str) -> object | None:
     """Get a compiled ASN.1 schema for the given message type.
 
     Compiles the message-specific PDU module together with the
@@ -351,17 +351,15 @@ def get_compiled_schema(msg_type: str) -> Optional[object]:
         compiled = asn1tools.compile_files(file_paths, "uper")
         _compiled_schemas[msg_type] = compiled
         _save_compiled_to_disk(cache_path, compiled)
-        logger.info("Compiled ASN.1 schema for %s from %d files",
-                     msg_type, len(file_paths))
+        logger.info("Compiled ASN.1 schema for %s from %d files", msg_type, len(file_paths))
         return compiled
     except Exception as e:
         _decoding_errors[f"compile:{msg_type}:{type(e).__name__}"] += 1
-        logger.error("Failed to compile ASN.1 schema for %s: %s",
-                      msg_type, e)
+        logger.error("Failed to compile ASN.1 schema for %s: %s", msg_type, e)
         return None
 
 
-def decode_its_message(msg_type: str, payload: bytes) -> Optional[dict]:
+def decode_its_message(msg_type: str, payload: bytes) -> dict | None:
     """Decode a V2X ITS message payload using ASN.1 schemas.
 
     Args:
@@ -385,8 +383,7 @@ def decode_its_message(msg_type: str, payload: bytes) -> Optional[dict]:
         return decoded
     except Exception as e:
         _decoding_errors[f"decode:{msg_type}:{type(e).__name__}"] += 1
-        logger.debug("ASN.1 decode failed for %s (%s): %s",
-                      msg_type, asn1_type_name, e)
+        logger.debug("ASN.1 decode failed for %s (%s): %s", msg_type, asn1_type_name, e)
         return None
 
 

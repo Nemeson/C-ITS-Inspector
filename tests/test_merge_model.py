@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pcap2kml_player.data_model import (
     CaptureRole,
@@ -55,7 +55,7 @@ def _cam(timestamp: datetime, source: MessageSource, lat: float) -> V2xMessage:
 
 
 def test_build_merge_groups_merges_txa_rxa_srem_by_request_key() -> None:
-    now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
     messages = [
         _srem(now, _source("txa_case.pcap", CaptureRole.TXA)),
         _srem(now + timedelta(milliseconds=80), _source("rxa_case.pcap", CaptureRole.RXA)),
@@ -71,7 +71,7 @@ def test_build_merge_groups_merges_txa_rxa_srem_by_request_key() -> None:
 
 
 def test_score_merge_candidate_rejects_far_apart_cam_messages() -> None:
-    now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
     left = _cam(now, _source("txa_case.pcap", CaptureRole.TXA), 52.0)
     right = _cam(now + timedelta(milliseconds=50), _source("rxa_case.pcap", CaptureRole.RXA), 52.01)
 
@@ -82,7 +82,7 @@ def test_score_merge_candidate_rejects_far_apart_cam_messages() -> None:
 
 
 def test_session_canonical_messages_keeps_one_message_per_merge_group() -> None:
-    now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
     tx = _srem(now, _source("txa_case.pcap", CaptureRole.TXA))
     rx = _srem(now + timedelta(milliseconds=80), _source("rxa_case.pcap", CaptureRole.RXA))
     unrelated = _cam(now + timedelta(seconds=1), _source("txa_case.pcap", CaptureRole.TXA), 52.0)
