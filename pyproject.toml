@@ -23,8 +23,57 @@ classifiers = [
 dev = [
     "pytest>=7.0",
     "pytest-cov",
+    "pytest-qt>=4.0",
+    "pytest-benchmark>=4.0",
+    "pytest-mock>=3.0",
+    "pytest-xdist>=3.0",
+    "pytest-timeout>=2.0",
+    "hypothesis>=6.0",
+    "freezegun>=1.0",
     "ruff>=0.4.0",
     "mypy>=1.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 120
+filterwarnings = [
+    "ignore::DeprecationWarning:simplekml.*",
+]
+markers = [
+    "unit: Fast isolated unit tests (default, run always)",
+    "integration: Module interactions and real file I/O",
+    "gui: PyQt6 widget tests using pytest-qt",
+    "e2e: End-to-end full pipeline tests (slow)",
+    "property: Hypothesis property-based randomized tests",
+    "slow: Tests that take >5 seconds",
+    "benchmark: pytest-benchmark performance tests",
+    "pcap_real: Tests requiring real capture files",
+    "network: Tests requiring network access (mocked by default)",
+    "qt_headless: Requires QT_QPA_PLATFORM=offscreen",
+]
+addopts = [
+    "--strict-markers",
+    "-m", "not slow and not benchmark and not e2e",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["pcap2kml_player"]
+omit = [
+    "pcap2kml_player/main.py",
+    "pcap2kml_player/ui/*",
+    "pcap2kml_player/map_widget.py",
+    "pcap2kml_player/native_map_widget.py",
+]
+
+[tool.coverage.report]
+precision = 1
+fail_under = 80
+show_missing = true
+skip_covered = false
+exclude_also = [
+    "pragma: no cover",
 ]
 
 [tool.setuptools.packages.find]
@@ -37,22 +86,22 @@ line-length = 120
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # Pyflakes
-    "I",   # isort
-    "N",   # pep8-naming
-    "UP",  # pyupgrade
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "SIM", # flake8-simplify
-    "ARG", # flake8-unused-arguments
+    "E",
+    "W",
+    "F",
+    "I",
+    "N",
+    "UP",
+    "B",
+    "C4",
+    "SIM",
+    "ARG",
 ]
 ignore = [
-    "E501",  # line too long — handled by ruff format
-    "N802",  # lower-case function names (Qt overrides)
-    "N803",  # lower-case argument names (Qt arguments)
-    "N818",  # Exception naming (ParseCancelled)
+    "E501",
+    "N802",
+    "N803",
+    "N818",
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -71,27 +120,3 @@ warn_unused_ignores = true
 warn_return_any = true
 ignore_missing_imports = true
 exclude = ["tests/"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-filterwarnings = [
-    "ignore::DeprecationWarning:simplekml.*",
-]
-
-[tool.coverage.run]
-branch = true
-source = ["pcap2kml_player"]
-omit = [
-    "pcap2kml_player/main.py",
-    "pcap2kml_player/ui/*",
-    "pcap2kml_player/map_widget.py",
-    "pcap2kml_player/native_map_widget.py",
-]
-
-[tool.coverage.report]
-precision = 1
-skip_covered = false
-show_missing = true
-exclude_also = [
-    "pragma: no cover",
-]

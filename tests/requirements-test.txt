@@ -1,0 +1,31 @@
+# Test-only dependencies for PCAP2KML Player
+# Install: pip install -r tests/requirements-test.txt
+
+# Core testing
+pytest>=7.0
+pytest-cov>=4.0
+pytest-timeout>=2.0
+
+# Qt/GUI testing
+pytest-qt>=4.0
+
+# Property-based testing
+hypothesis>=6.0
+
+# Benchmarking
+pytest-benchmark>=4.0
+
+# Parallel execution
+pytest-xdist>=3.0
+
+# Mock utilities
+pytest-mock>=3.0
+
+# Time freezing for deterministic tests
+freezegun>=1.0
+
+# PCAP generation
+scapy>=2.5
+
+# NMEA generation
+pynmea2>=1.0

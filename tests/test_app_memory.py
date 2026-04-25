@@ -45,3 +45,19 @@ def test_existing_last_session_files_filters_missing_entries(tmp_path: Path, mon
     memory = AppMemory(last_opened_files=[str(existing), str(missing)])
 
     assert memory.existing_last_session_files() == [str(existing)]
+
+
+def test_load_missing_file_returns_defaults(tmp_path: Path, monkeypatch) -> None:
+    storage_file = tmp_path / "nonexistent.json"
+    monkeypatch.setattr(AppMemory, "storage_path", classmethod(lambda cls: storage_file))
+    mem = AppMemory.load()
+    assert mem.last_session_message_count == 0
+    assert mem.last_session_station_count == 0
+
+
+def test_load_corrupt_json_returns_defaults(tmp_path: Path, monkeypatch) -> None:
+    storage_file = tmp_path / "bad.json"
+    storage_file.write_text("not json", encoding="utf-8")
+    monkeypatch.setattr(AppMemory, "storage_path", classmethod(lambda cls: storage_file))
+    mem = AppMemory.load()
+    assert mem.last_session_message_count == 0

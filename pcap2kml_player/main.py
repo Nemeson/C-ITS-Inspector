@@ -71,14 +71,20 @@ def install_global_exception_handler(app: QApplication) -> None:
             exc_info=(exc_type, exc_value, exc_traceback),
         )
         details = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-        QMessageBox.critical(
-            None,
-            "Unerwarteter Fehler",
-            "Die Anwendung hat einen unbehandelten Fehler erkannt.\n"
-            "Details stehen im Log. Die aktuelle Aktion wurde abgebrochen.\n\n"
-            f"{exc_value}",
-            QMessageBox.StandardButton.Ok,
-        )
+        # Avoid QMessageBox when headless (CI/tests) to prevent hangs/deadlocks.
+        try:
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(
+                None,
+                "Unerwarteter Fehler",
+                "Die Anwendung hat einen unbehandelten Fehler erkannt.\n"
+                "Details stehen im Log. Die aktuelle Aktion wurde abgebrochen.\n\n"
+                f"{exc_value}",
+                QMessageBox.StandardButton.Ok,
+            )
+        except Exception:
+            logger.error("Failed to show QMessageBox: %s", exc_value)
         logger.debug("Unhandled exception details:\n%s", details)
 
     sys.excepthook = _handle_exception
