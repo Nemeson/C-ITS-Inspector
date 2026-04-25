@@ -1,0 +1,13 @@
+18:56:55 [INFO] pcap2kml: Starting PCAP2KML Player
+18:56:55 [INFO] pcap2kml: Qt runtime: software=True | map_backend=webengine | QT_OPENGL=software | QT_OPENGL_DLL=C:\Users\Kevin Seipel\AppData\Roaming\Python\Python314\site-packages\PyQt6\Qt6\bin\opengl32sw.dll | QSG_RHI_PREFER_SOFTWARE_RENDERER=1 | flags=--disable-direct-composition --disable-features=DirectComposition,DirectCompositionVideoOverlays,UseHDRTransferFunction --disable-accelerated-video-decode --disable-gpu-memory-buffer-video-frames --force-color-profile=srgb --disable-gpu-rasterization --disable-oop-rasterization
+18:56:55 [INFO] pcap2kml_player.map_widget: Map backend created: webengine
+18:56:56 [INFO] pcap2kml_player.map_widget: WebEngine loadFinished(ok=True) — starting Leaflet bootstrap probe
+18:56:56 [INFO] pcap2kml_player.map_widget: Leaflet bootstrap probe succeeded — map is ready
+18:57:21 [INFO] pcap2kml_player.pcap_parser: Using scapy backend (TShark not available)
+18:57:22 [INFO] pcap2kml_player.pcap_parser: Parsed 617 messages from rsu_rxa.pcap
+18:57:22 [INFO] pcap2kml_player.pcap_parser: Using scapy backend (TShark not available)
+18:57:25 [INFO] pcap2kml_player.pcap_parser: Parsed 3109 messages from rsu_txa.pcap
+18:57:33 [ERROR] pcap2kml_player.map_widget: WebEngine render process terminated: status=RenderProcessTerminationStatus.CrashedTerminationStatus exit_code=143
+18:57:33 [INFO] pcap2kml_player.ui.main_window: Map issue detected: WebEngine Render-Prozess beendet (Status=RenderProcessTerminationStatus.CrashedTerminationStatus, Code=143)
+18:57:33 [WARNING] pcap2kml_player.ui.main_window: Fatal map issue — switching to native fallback (persist=False): WebEngine Render-Prozess beendet (Status=RenderProcessTerminationStatus.CrashedTerminationStatus, Code=143)
+18:57:33 [INFO] pcap2kml_player.ui.main_window: Replacing map widget: backend=native persist=False

@@ -47,7 +47,7 @@
 
 ---
 
-## Phase 3: Karten- und Visualisierung (IN ARBEIT)
+## Phase 3: Karten- und Visualisierung (TEILWEISE)
 
 ### Bereits implementiert
 - [x] **Export-Formate**: GeoJSON, CSV, GPX, KML Tour
@@ -90,7 +90,34 @@
 
 ---
 
-## Offene Punkte
+## Phase 6: Test-Strategie & Qualitätssicherung (ABGESCHLOSSEN)
+
+- [x] **Teststrategie** (`tests/TESTING_STRATEGY.md`) — Pyramide, Risikomatrix, Marks
+- [x] **Fixture-Hierarchie** (`tests/conftest.py`, `factories.py`, `conftest_pcap.py`)
+- [x] **Coverage-Gate** 80% — aktuell 80.2% Line (306/306 Tests passing)
+- [x] **pytest-Marks**: unit, integration, gui, e2e, property, slow, benchmark, pcap_real
+- [x] **Unit-Test-Erweiterung**: 39 neue Tests (security_parser, player_controller, map_backend)
+- [x] **Bugfixes**: Race-Condition in `_cleanup_loader`, Exception-Handler robust für headless
+- [ ] 90% Branch Coverage (aktuell ~65%; erfordert 200+ Parser/Scene-Tests)
+- [ ] Property-Tests (Hypothesis — malformed ASN.1/NMEA Frames)
+- [ ] GUI-Tests mit pytest-qt (headless `QT_QPA_PLATFORM=offscreen`)
+
+---
+
+## Zusammenfassung der Änderungen
+
+| Branch | Inhalt | Tests |
+|--------|--------|-------|
+| `bugfix/optimization-round` | Thread-Safety, Signal-Leaks, Timer-Lifecycle, Performance | 245/245 |
+| `feature/ci-toolchain` | ruff, mypy, GitHub Actions CI | 254/254 |
+| `feature/scene-aggregation-flow` | Lane-Connectivity, Flow-Freigabe-Check | 254/254 |
+| `feature/pki-verification` | PKI-Parser, UI-Platzhalter, ECDSA-Skript | 254/254 |
+| `feature/phase-d-visualization` | Dashboard, Export-Formate (GeoJSON/CSV/GPX/KML) | 267/267 |
+| `feature/testing-strategy` | Teststrategie, Fixtures, 39 neue Tests | 306/306 |
+
+**Gesamt auf `master`: 306 Tests, 80.2% Coverage, 25.7s Laufzeit**
+
+---
 
 - **MapLibre-Integration**: Erfordert WebEngine- oder Qt-Widget-Backend für Vektor-Tiles.
 - **Offline-Karten**: MBTiles oder PMTiles als Assets einbinden.
@@ -99,7 +126,7 @@
 
 ---
 
-## Empfohlene Nächste Schritte
+## Empfohlene Nächste Schritte (nach Priorität)
 
 1. **MapLibre-Integration** (Phase 3) — höchste Priorität für Offline-Karten
 2. **Diagramme im Dashboard** (Phase 4) — Matplotlib/PyQtGraph für visuelle Statistiken
