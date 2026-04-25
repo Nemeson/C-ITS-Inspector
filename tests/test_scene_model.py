@@ -1,6 +1,6 @@
 """Tests for scene aggregation and phase forecast logic."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,16 +24,16 @@ from pcap2kml_player.scene_model import (
     collect_prioritization_issue_history,
     collect_prioritization_issue_occurrences,
     find_overdue_requests,
-    get_request_operational_status,
     get_clock_skew_warnings,
     get_eta_accuracy_seconds,
+    get_request_operational_status,
     is_flow_allowed,
 )
 
 
 @pytest.fixture
 def now():
-    return datetime(2026, 4, 18, 12, 0, 0, tzinfo=timezone.utc)
+    return datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC)
 
 
 TESTFILES = Path(__file__).resolve().parent.parent / "testfiles"
@@ -41,34 +41,51 @@ TESTFILES = Path(__file__).resolve().parent.parent / "testfiles"
 
 # ---------- find_overdue_requests ----------
 
+
 def test_pending_default_request_within_window_not_overdue(now):
     req = ActiveRequest(
-        request_id=1, sequence_number=0, intersection_id=42, station_id="A",
-        importance_level=5, requested_at=now - timedelta(milliseconds=800),
+        request_id=1,
+        sequence_number=0,
+        intersection_id=42,
+        station_id="A",
+        importance_level=5,
+        requested_at=now - timedelta(milliseconds=800),
     )
     assert find_overdue_requests([req], now) == []
 
 
 def test_pending_default_request_past_window_is_overdue(now):
     req = ActiveRequest(
-        request_id=1, sequence_number=0, intersection_id=42, station_id="A",
-        importance_level=5, requested_at=now - timedelta(milliseconds=1500),
+        request_id=1,
+        sequence_number=0,
+        intersection_id=42,
+        station_id="A",
+        importance_level=5,
+        requested_at=now - timedelta(milliseconds=1500),
     )
     assert find_overdue_requests([req], now) == [req]
 
 
 def test_high_priority_request_has_stricter_500ms_window(now):
     req = ActiveRequest(
-        request_id=2, sequence_number=0, intersection_id=42, station_id="B",
-        importance_level=12, requested_at=now - timedelta(milliseconds=700),
+        request_id=2,
+        sequence_number=0,
+        intersection_id=42,
+        station_id="B",
+        importance_level=12,
+        requested_at=now - timedelta(milliseconds=700),
     )
     assert find_overdue_requests([req], now) == [req]
 
 
 def test_answered_request_ignored_even_if_old(now):
     req = ActiveRequest(
-        request_id=3, sequence_number=0, intersection_id=42, station_id="C",
-        importance_level=5, requested_at=now - timedelta(seconds=10),
+        request_id=3,
+        sequence_number=0,
+        intersection_id=42,
+        station_id="C",
+        importance_level=5,
+        requested_at=now - timedelta(seconds=10),
         responded_at=now - timedelta(seconds=5),
     )
     assert find_overdue_requests([req], now) == []
@@ -270,9 +287,11 @@ def test_build_request_visuals_keeps_recently_answered_request_visible(now):
 
 # ---------- is_flow_allowed ----------
 
+
 def _scene_with_phase(now, phase, forecast_segments=None):
     sg = SignalGroupState(
-        signal_group_id=3, phase=phase,
+        signal_group_id=3,
+        phase=phase,
         time_confidence=ForecastConfidence.HIGH,
     )
     isec = IntersectionState(intersection_id=42)
@@ -280,7 +299,8 @@ def _scene_with_phase(now, phase, forecast_segments=None):
     forecasts = {}
     if forecast_segments is not None:
         forecasts[42] = SpatForecast(
-            intersection_id=42, horizon_seconds=30.0,
+            intersection_id=42,
+            horizon_seconds=30.0,
             segments_by_group={3: forecast_segments},
         )
     return SceneSnapshot(
@@ -308,8 +328,12 @@ def test_flow_blocked_with_eta_from_forecast(now):
     release = now + timedelta(seconds=8)
     segs = [
         PhaseSegment(MovementPhaseState.STOP_AND_REMAIN, now, release, ForecastConfidence.MEDIUM),
-        PhaseSegment(MovementPhaseState.PROTECTED_MOVEMENT_ALLOWED, release,
-                     release + timedelta(seconds=15), ForecastConfidence.MEDIUM),
+        PhaseSegment(
+            MovementPhaseState.PROTECTED_MOVEMENT_ALLOWED,
+            release,
+            release + timedelta(seconds=15),
+            ForecastConfidence.MEDIUM,
+        ),
     ]
     scene = _scene_with_phase(now, MovementPhaseState.STOP_AND_REMAIN, forecast_segments=segs)
     allowed, eta, conf = is_flow_allowed(scene, 42, 1, 5, ingress_signal_group=3)
@@ -336,6 +360,7 @@ def test_unknown_signal_group_returns_blocked(now):
 
 
 # ---------- build_scene_snapshot ----------
+
 
 def test_build_scene_snapshot_joins_latest_map_and_spat(now):
     map_msg = V2xMessage(
@@ -553,7 +578,7 @@ def test_build_scene_snapshot_creates_fallback_intersection_for_raw_map_and_spat
 
 
 def test_build_scene_snapshot_computes_clock_skew_from_spat_dsrc_time(now):
-    start_of_year = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    start_of_year = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
     packet_timestamp = start_of_year + timedelta(minutes=10, seconds=5)
     spat_msg = V2xMessage(
         timestamp=packet_timestamp,
@@ -686,9 +711,7 @@ def test_build_scene_snapshot_detects_raw_map_and_spat_in_real_test_pcap():
 
 
 def test_real_rsu_srem_ssem_builds_granted_request_visuals():
-    session = parse_pcap(
-        str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap")
-    )
+    session = parse_pcap(str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap"))
     parse_pcap(
         str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_txa.pcap"),
         session,
@@ -696,11 +719,7 @@ def test_real_rsu_srem_ssem_builds_granted_request_visuals():
     session.finalize()
 
     scene = build_scene_snapshot(session.messages, session.messages[-1].timestamp)
-    request_visuals = [
-        visual
-        for visuals in scene.request_visuals_by_intersection.values()
-        for visual in visuals
-    ]
+    request_visuals = [visual for visuals in scene.request_visuals_by_intersection.values() for visual in visuals]
 
     assert scene.request_states
     assert any(request.intersection_id == 72 for request in scene.request_states)

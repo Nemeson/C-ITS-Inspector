@@ -27,15 +27,13 @@ class AppMemory:
     @classmethod
     def storage_path(cls) -> Path:
         """Return the JSON file path used for persistent memory."""
-        base_dir = QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.AppDataLocation
-        )
+        base_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
         if not base_dir:
             base_dir = str(Path.home() / ".pcap2kml_player")
         return Path(base_dir) / "memory.json"
 
     @classmethod
-    def load(cls) -> "AppMemory":
+    def load(cls) -> AppMemory:
         """Load persisted memory from disk if available."""
         path = cls.storage_path()
         try:
@@ -50,13 +48,8 @@ class AppMemory:
             last_export_directory=str(data.get("last_export_directory", "")),
             last_session_message_count=int(data.get("last_session_message_count", 0)),
             last_session_station_count=int(data.get("last_session_station_count", 0)),
-            last_session_duration_seconds=float(
-                data.get("last_session_duration_seconds", 0.0)
-            ),
-            last_session_types={
-                str(key): int(value)
-                for key, value in data.get("last_session_types", {}).items()
-            },
+            last_session_duration_seconds=float(data.get("last_session_duration_seconds", 0.0)),
+            last_session_types={str(key): int(value) for key, value in data.get("last_session_types", {}).items()},
         )
 
     def save(self) -> None:
@@ -107,4 +100,3 @@ class AppMemory:
     def existing_last_session_files(self) -> list[str]:
         """Return only the last-opened files that still exist."""
         return [path for path in self.last_opened_files if Path(path).exists()]
-

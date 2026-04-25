@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import logging
 import shutil
-from math import cos, hypot, radians
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional
 from collections import Counter
+from datetime import UTC, datetime
+from math import cos, hypot, radians
+from pathlib import Path
 
 from scapy.layers.dot11 import Dot11
 from scapy.layers.l2 import SNAP
@@ -54,12 +53,11 @@ PYSHARK_OPEN_TIMEOUT_S = 30.0
 
 # ITS-PDU-Header itsPduHeader.messageId fallback mapping (ETSI TS 102 894-2).
 # Used when BTP destination port is missing or masked.
-from .protocol_constants import ITS_PDU_MESSAGE_ID
 
 # Re-export for backward compatibility of direct pcap_parser imports
 
 
-def _infer_msg_type_from_pdu(payload: bytes) -> Optional[MessageType]:
+def _infer_msg_type_from_pdu(payload: bytes) -> MessageType | None:
     """Fallback: infer message type from ITS-PDU header messageId byte.
 
     ITS PDU header layout (ETSI TS 102 894-2):
@@ -98,16 +96,12 @@ def _default_details(
         "BTP-Zielport": str(dst_port),
         "Payload-Laenge": str(len(payload)),
         "Bedeutung": semantic_label,
-        "ASN.1-Dekodierung": "erfolgreich"
-        if decoded_ok
-        else "nicht verfuegbar - Rohdetails aktiv",
+        "ASN.1-Dekodierung": "erfolgreich" if decoded_ok else "nicht verfuegbar - Rohdetails aktiv",
     }
     return details
 
 
-def _extract_geonet_lpv(
-    raw_data: bytes, btp_offset: int
-) -> Optional[dict[str, float | str]]:
+def _extract_geonet_lpv(raw_data: bytes, btp_offset: int) -> dict[str, float | str] | None:
     """Extract position-vector fields from a GeoNetworking long position vector."""
     gn_src_offset = btp_offset - 24
     lat_offset = btp_offset - 16
@@ -117,12 +111,8 @@ def _extract_geonet_lpv(
     if gn_src_offset < 0 or heading_offset + 2 > len(raw_data):
         return None
 
-    lat = (
-        int.from_bytes(raw_data[lat_offset : lat_offset + 4], "big", signed=True) / 1e7
-    )
-    lon = (
-        int.from_bytes(raw_data[lon_offset : lon_offset + 4], "big", signed=True) / 1e7
-    )
+    lat = int.from_bytes(raw_data[lat_offset : lat_offset + 4], "big", signed=True) / 1e7
+    lon = int.from_bytes(raw_data[lon_offset : lon_offset + 4], "big", signed=True) / 1e7
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return None
 
@@ -137,7 +127,7 @@ def _extract_geonet_lpv(
     }
 
 
-def _partial_cam_decode(payload: bytes) -> Optional[dict[str, int]]:
+def _partial_cam_decode(payload: bytes) -> dict[str, int] | None:
     """Extract stable CAM header fields even when full ASN.1 decoding fails."""
     if len(payload) < 8 or payload[0] != 0x02 or payload[1] != 0x02:
         return None
@@ -147,7 +137,7 @@ def _partial_cam_decode(payload: bytes) -> Optional[dict[str, int]]:
     }
 
 
-def _raw_decode_hint(msg_type: MessageType, payload: bytes) -> Optional[str]:
+def _raw_decode_hint(msg_type: MessageType, payload: bytes) -> str | None:
     """Return a more specific fallback hint for known undecoded payload shapes."""
     if msg_type != MessageType.CAM or len(payload) < 2:
         return None
@@ -162,7 +152,7 @@ def _decode_direct_geonet_payload(
     timestamp: datetime,
     station_id: str,
     source: str,
-) -> Optional[V2xMessage]:
+) -> V2xMessage | None:
     """Decode a GeoNetworking/BTP payload from direct ITS-G5 frames.
 
     The provided capture files contain GeoNetworking frames without UDP wrapping.
@@ -178,9 +168,7 @@ def _decode_direct_geonet_payload(
             # one byte ahead of the BTP payload start (offset+4, then +1).
             btp_start = offset + 4
             if btp_start + 2 < len(raw_data):
-                fallback_type = _infer_msg_type_from_pdu(
-                    raw_data[btp_start : btp_start + 2]
-                )
+                fallback_type = _infer_msg_type_from_pdu(raw_data[btp_start : btp_start + 2])
                 if fallback_type is not None:
                     msg_type = fallback_type
                 else:
@@ -262,7 +250,7 @@ def _tshark_available() -> bool:
     return shutil.which("tshark") is not None
 
 
-def _extract_cam_position(decoded: dict) -> Optional[tuple]:
+def _extract_cam_position(decoded: dict) -> tuple | None:
     """Extract lat/lon/alt/speed/heading from a decoded CAM message."""
     try:
         cam = decoded.get("cam", decoded)
@@ -289,7 +277,7 @@ def _extract_cam_position(decoded: dict) -> Optional[tuple]:
         return None
 
 
-def _extract_denm_position(decoded: dict) -> Optional[tuple]:
+def _extract_denm_position(decoded: dict) -> tuple | None:
     """Extract lat/lon/alt/speed/heading from a decoded DENM message."""
     try:
         denm = decoded.get("denm", decoded)
@@ -310,7 +298,7 @@ def _extract_denm_position(decoded: dict) -> Optional[tuple]:
         return None
 
 
-def _extract_generic_position(decoded: dict, msg_type: MessageType) -> Optional[tuple]:
+def _extract_generic_position(decoded: dict, msg_type: MessageType) -> tuple | None:
     """Extract position from other ITS message types (SREM, SSEM, MAPEM, SPATEM)."""
     try:
         # Most ITS messages have a reference position in their header
@@ -318,13 +306,11 @@ def _extract_generic_position(decoded: dict, msg_type: MessageType) -> Optional[
         station_id = str(header.get("stationID", header.get("stationId", "unknown")))
 
         # Try to find any position reference
-        ref_pos = decoded.get("referencePosition", None)
+        ref_pos = decoded.get("referencePosition")
         if ref_pos is None:
             # Search nested structures
             for key, val in decoded.items():
-                if isinstance(val, dict) and any(
-                    field in val for field in ("latitude", "lat", "longitude", "long")
-                ):
+                if isinstance(val, dict) and any(field in val for field in ("latitude", "lat", "longitude", "long")):
                     ref_pos = val
                     break
         if ref_pos is None and msg_type == MessageType.MAPEM:
@@ -364,18 +350,14 @@ def _safe_get(obj, *keys, default=None):
     for key in keys:
         if isinstance(cur, dict):
             cur = cur.get(key, default if key == keys[-1] else {})
-        elif (
-            isinstance(cur, (list, tuple))
-            and isinstance(key, int)
-            and 0 <= key < len(cur)
-        ):
+        elif isinstance(cur, (list, tuple)) and isinstance(key, int) and 0 <= key < len(cur):
             cur = cur[key]
         else:
             return default
     return cur if cur != {} else default
 
 
-def _coerce_int(value: object) -> Optional[int]:
+def _coerce_int(value: object) -> int | None:
     """Best-effort integer normalization for nested decoded fields."""
     if isinstance(value, bool):
         return int(value)
@@ -398,12 +380,12 @@ def _coerce_int(value: object) -> Optional[int]:
     return None
 
 
-def _coerce_lane_id(value: object) -> Optional[int]:
+def _coerce_lane_id(value: object) -> int | None:
     """Normalize lane/approach choice structures to their numeric id."""
     return _coerce_int(value)
 
 
-def _normalize_geo_point(point: object) -> Optional[dict[str, float]]:
+def _normalize_geo_point(point: object) -> dict[str, float] | None:
     """Normalize ASN.1 coordinate dicts to {'lat', 'lon'} in decimal degrees."""
     if not isinstance(point, dict):
         return None
@@ -436,9 +418,7 @@ def _delta_to_geo(
     return (lat, lon)
 
 
-def _normalize_node_list(
-    node_list: object, ref_point: Optional[dict[str, float]]
-) -> Optional[dict]:
+def _normalize_node_list(node_list: object, ref_point: dict[str, float] | None) -> dict | None:
     """Convert ASN.1 MAP nodeList variants to a normalized {'nodes': [...]} shape."""
     if ref_point is None:
         return None
@@ -476,15 +456,13 @@ def _normalize_node_list(
             delta_y = int(delta.get("y", 0))
         except (TypeError, ValueError):
             continue
-        current_lat, current_lon = _delta_to_geo(
-            current_lat, current_lon, delta_x, delta_y
-        )
+        current_lat, current_lon = _delta_to_geo(current_lat, current_lon, delta_x, delta_y)
         normalized_nodes.append({"lat": current_lat, "lon": current_lon})
 
     return {"nodes": normalized_nodes} if normalized_nodes else None
 
 
-def _lane_role(lane: dict) -> Optional[str]:
+def _lane_role(lane: dict) -> str | None:
     """Classify a normalized MAP lane into a simple directional role."""
     if lane.get("ingressApproach") is not None:
         return "inbound"
@@ -493,14 +471,12 @@ def _lane_role(lane: dict) -> Optional[str]:
     return None
 
 
-def _normalize_map_connection(connection: object) -> Optional[dict]:
+def _normalize_map_connection(connection: object) -> dict | None:
     """Normalize one MAP connectsTo entry to a compact app-friendly shape."""
     if not isinstance(connection, dict):
         return None
     normalized = dict(connection)
-    connection_id = _coerce_int(
-        connection.get("connectionID", connection.get("connectionId"))
-    )
+    connection_id = _coerce_int(connection.get("connectionID", connection.get("connectionId")))
     if connection_id is not None:
         normalized["connectionId"] = connection_id
 
@@ -518,7 +494,7 @@ def _perpendicular_stopline(
     anchor: tuple[float, float],
     neighbor: tuple[float, float],
     width_m: float,
-) -> Optional[list[dict[str, float]]]:
+) -> list[dict[str, float]] | None:
     """Build a short stopline perpendicular to a lane centerline."""
     lat_scale = 111_320.0
     lon_scale = max(1e-6, 111_320.0 * cos(radians(anchor[0])))
@@ -545,9 +521,9 @@ def _perpendicular_stopline(
 
 def _derive_stopline(
     lane: dict,
-    ref_point: Optional[dict[str, float]],
-    default_lane_width_cm: Optional[int],
-) -> Optional[dict]:
+    ref_point: dict[str, float] | None,
+    default_lane_width_cm: int | None,
+) -> dict | None:
     """Derive a simple stopline near the intersection-facing end of an inbound lane."""
     if _lane_role(lane) != "inbound":
         return None
@@ -558,9 +534,7 @@ def _derive_stopline(
     if not isinstance(nodes, list) or len(nodes) < 2:
         return None
 
-    points = [
-        _normalize_geo_point(node) if isinstance(node, dict) else None for node in nodes
-    ]
+    points = [_normalize_geo_point(node) if isinstance(node, dict) else None for node in nodes]
     points = [point for point in points if point is not None]
     if len(points) < 2:
         return None
@@ -570,13 +544,11 @@ def _derive_stopline(
     if ref_point is not None:
         start_distance = hypot(
             (points[0]["lat"] - ref_point["lat"]) * 111_320.0,
-            (points[0]["lon"] - ref_point["lon"])
-            * max(1e-6, 111_320.0 * cos(radians(ref_point["lat"]))),
+            (points[0]["lon"] - ref_point["lon"]) * max(1e-6, 111_320.0 * cos(radians(ref_point["lat"]))),
         )
         end_distance = hypot(
             (points[-1]["lat"] - ref_point["lat"]) * 111_320.0,
-            (points[-1]["lon"] - ref_point["lon"])
-            * max(1e-6, 111_320.0 * cos(radians(ref_point["lat"]))),
+            (points[-1]["lon"] - ref_point["lon"]) * max(1e-6, 111_320.0 * cos(radians(ref_point["lat"]))),
         )
         if end_distance < start_distance:
             intersection_anchor = points[-1]
@@ -619,9 +591,7 @@ def _normalize_map_intersection(intersection: dict) -> dict:
             normalized_node_list = _normalize_node_list(lane.get("nodeList"), ref_point)
             if normalized_node_list is not None:
                 normalized_lane["nodeList"] = normalized_node_list
-            lane_id = _coerce_int(
-                lane.get("laneID", lane.get("laneId", lane.get("id")))
-            )
+            lane_id = _coerce_int(lane.get("laneID", lane.get("laneId", lane.get("id"))))
             if lane_id is not None:
                 normalized_lane["laneId"] = lane_id
             role = _lane_role(lane)
@@ -629,24 +599,17 @@ def _normalize_map_intersection(intersection: dict) -> dict:
                 normalized_lane["laneRole"] = role
             connects_to = lane.get("connectsTo", lane.get("connectsto"))
             if isinstance(connects_to, dict):
-                connects_to = connects_to.get(
-                    "connections", connects_to.get("connectsTo")
-                )
+                connects_to = connects_to.get("connections", connects_to.get("connectsTo"))
             if isinstance(connects_to, list):
                 normalized_connections = [
                     normalized_connection
-                    for normalized_connection in (
-                        _normalize_map_connection(connection)
-                        for connection in connects_to
-                    )
+                    for normalized_connection in (_normalize_map_connection(connection) for connection in connects_to)
                     if normalized_connection is not None
                 ]
                 if normalized_connections:
                     normalized_lane["connections"] = normalized_connections
                     normalized_lane["connectsTo"] = normalized_connections
-            stopline = _derive_stopline(
-                normalized_lane, ref_point, default_lane_width_cm
-            )
+            stopline = _derive_stopline(normalized_lane, ref_point, default_lane_width_cm)
             if stopline is not None:
                 normalized_lane["stopLine"] = stopline
             normalized_lanes.append(normalized_lane)
@@ -665,13 +628,8 @@ def _normalize_spat_intersection(intersection: dict) -> dict:
             if not isinstance(state, dict):
                 continue
             normalized_state = dict(state)
-            if (
-                "stateTimeSpeed" not in normalized_state
-                and "state-time-speed" in normalized_state
-            ):
-                normalized_state["stateTimeSpeed"] = normalized_state[
-                    "state-time-speed"
-                ]
+            if "stateTimeSpeed" not in normalized_state and "state-time-speed" in normalized_state:
+                normalized_state["stateTimeSpeed"] = normalized_state["state-time-speed"]
             normalized_states.append(normalized_state)
         normalized["states"] = normalized_states
     return normalized
@@ -830,9 +788,7 @@ def _extra_fields_srem(decoded: dict) -> dict:
         eta = _safe_get(req, "expectedTimeOfArrival")
         if eta:
             fields["eta"] = eta
-        intersection_id = (
-            _coerce_int(req.get("intersectionID")) if isinstance(req, dict) else None
-        )
+        intersection_id = _coerce_int(req.get("intersectionID")) if isinstance(req, dict) else None
         if intersection_id is None and isinstance(req, dict):
             intersection_id = _coerce_int(req.get("id"))
         if intersection_id is not None:
@@ -872,17 +828,13 @@ def _extra_fields_ssem(decoded: dict) -> dict:
                 fields["requestId"] = requestor_station_id
             else:
                 fields["requestorStationId"] = requestor_station_id
-            fields["sequenceNumber"] = _coerce_int(
-                _safe_get(req, "requester", "sequenceNumber")
-            )
+            fields["sequenceNumber"] = _coerce_int(_safe_get(req, "requester", "sequenceNumber"))
             inbound_on = req.get("inboundOn") if isinstance(req, dict) else None
             inbound_lane = _coerce_lane_id(inbound_on)
             if inbound_lane is not None:
                 fields["inLane"] = inbound_lane
                 fields["inLaneRef"] = str(inbound_on)
-            fields["requestState"] = (
-                req.get("status") if isinstance(req, dict) else None
-            )
+            fields["requestState"] = req.get("status") if isinstance(req, dict) else None
     return {k: v for k, v in fields.items() if v is not None}
 
 
@@ -915,11 +867,11 @@ def _decode_its_message(
     transport: str,
     source: str,
     dst_port: int,
-    fallback_position: Optional[tuple[float, float]] = None,
-    fallback_station_id: Optional[str] = None,
-    fallback_speed: Optional[float] = None,
-    fallback_heading: Optional[float] = None,
-) -> Optional[V2xMessage]:
+    fallback_position: tuple[float, float] | None = None,
+    fallback_station_id: str | None = None,
+    fallback_speed: float | None = None,
+    fallback_heading: float | None = None,
+) -> V2xMessage | None:
     """Attempt to decode an ITS message using ASN.1 schemas."""
     try:
         from .asn1_schemas import decode_its_message
@@ -937,12 +889,8 @@ def _decode_its_message(
                     partial_cam["speed"] = fallback_speed
                 if fallback_heading is not None:
                     partial_cam["heading"] = fallback_heading
-                details = _default_details(
-                    msg_type, payload, transport, source, dst_port, False
-                )
-                details["ASN.1-Dekodierung"] = (
-                    "CAM-Header teilweise extrahiert - optionale Container unvollstaendig"
-                )
+                details = _default_details(msg_type, payload, transport, source, dst_port, False)
+                details["ASN.1-Dekodierung"] = "CAM-Header teilweise extrahiert - optionale Container unvollstaendig"
                 details["stationId"] = str(partial_cam["stationId"])
                 details["generationDeltaTime"] = str(partial_cam["generationDeltaTime"])
                 if fallback_speed is not None:
@@ -951,7 +899,7 @@ def _decode_its_message(
                     details["LPV-Heading"] = f"{fallback_heading:.1f} deg"
                 details["Fallback-Quelle"] = "GeoNetworking Long Position Vector"
                 return V2xMessage(
-                    timestamp=datetime.now(tz=timezone.utc),
+                    timestamp=datetime.now(tz=UTC),
                     station_id=str(partial_cam["stationId"]),
                     msg_type=msg_type,
                     latitude=fallback_position[0],
@@ -965,11 +913,7 @@ def _decode_its_message(
         return None
 
     extractor = _EXTRACTORS.get(msg_type, _extract_generic_position)
-    result = (
-        extractor(decoded, msg_type)
-        if extractor == _extract_generic_position
-        else extractor(decoded)
-    )
+    result = extractor(decoded, msg_type) if extractor == _extract_generic_position else extractor(decoded)
 
     if result is None:
         if fallback_position is None:
@@ -981,11 +925,7 @@ def _decode_its_message(
         station_id = fallback_station_id or "unknown"
     else:
         lat, lon, alt, speed, heading, station_id = result
-        if (
-            _is_null_island_position(lat, lon)
-            and fallback_position is not None
-            and msg_type != MessageType.DENM
-        ):
+        if _is_null_island_position(lat, lon) and fallback_position is not None and msg_type != MessageType.DENM:
             lat, lon = fallback_position
             details_position_source = "GeoNetworking Long Position Vector (0/0 ersetzt)"
         else:
@@ -998,7 +938,7 @@ def _decode_its_message(
             heading = fallback_heading
 
     # ─── Extract security header info from raw payload ────
-    from .security_parser import parse_security_header, extract_security_from_decoded
+    from .security_parser import extract_security_from_decoded, parse_security_header
 
     security_info = parse_security_header(payload)
     # Also try to extract from the decoded message fields
@@ -1025,7 +965,7 @@ def _decode_its_message(
         details["Positions-Fallback"] = details_position_source
 
     return V2xMessage(
-        timestamp=datetime.now(tz=timezone.utc),
+        timestamp=datetime.now(tz=UTC),
         station_id=station_id,
         msg_type=msg_type,
         latitude=lat,
@@ -1048,9 +988,7 @@ def _is_null_island_position(lat: float, lon: float) -> bool:
 def _annotate_cam_identity_outliers(session: SessionData) -> None:
     """Mark one-off CAM station-id outliers without silently rewriting them."""
     station_counts = Counter(
-        msg.station_id
-        for msg in session.messages
-        if msg.msg_type == MessageType.CAM and msg.station_id != "unknown"
+        msg.station_id for msg in session.messages if msg.msg_type == MessageType.CAM and msg.station_id != "unknown"
     )
     if len(station_counts) < 2:
         return
@@ -1138,9 +1076,7 @@ def _parse_with_pyshark(
                             msg_type,
                             payload,
                             transport="Pyshark / BTP",
-                            source=str(
-                                getattr(pkt, "eth", getattr(pkt, "wlan", "unknown"))
-                            ),
+                            source=str(getattr(pkt, "eth", getattr(pkt, "wlan", "unknown"))),
                             dst_port=dst_port,
                         )
                         if msg:
@@ -1163,9 +1099,9 @@ def _pyshark_timestamp(pkt) -> datetime:
     """Extract timestamp from a pyshark packet."""
     try:
         ts = float(pkt.sniff_timestamp)
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
+        return datetime.fromtimestamp(ts, tz=UTC)
     except Exception:
-        return datetime.now(tz=timezone.utc)
+        return datetime.now(tz=UTC)
 
 
 # ─── Scapy Backend ────────────────────────────────────────────────
@@ -1181,7 +1117,7 @@ def _parse_with_scapy(
 
     Returns the number of messages successfully parsed.
     """
-    from scapy.all import Ether, PcapReader, Raw, TCP, UDP
+    from scapy.all import TCP, UDP, Ether, PcapReader, Raw
 
     count = 0
     try:
@@ -1198,7 +1134,7 @@ def _parse_with_scapy(
             if cancel_check and cancel_check():
                 reader.close()
                 raise ParseCancelled("Parsing was cancelled")
-            ts = datetime.fromtimestamp(float(pkt.time), tz=timezone.utc)
+            ts = datetime.fromtimestamp(float(pkt.time), tz=UTC)
 
             # Check for UDP packets (BTP runs over UDP in test setups)
             if UDP in pkt and Raw in pkt:
@@ -1234,9 +1170,9 @@ def _parse_with_scapy(
                         count += 1
 
             elif Raw in pkt:
-                is_direct_geonet = (
-                    SNAP in pkt and int(pkt[SNAP].code) == GEONETWORKING_ETHERTYPE
-                ) or (Ether in pkt and int(pkt[Ether].type) == GEONETWORKING_ETHERTYPE)
+                is_direct_geonet = (SNAP in pkt and int(pkt[SNAP].code) == GEONETWORKING_ETHERTYPE) or (
+                    Ether in pkt and int(pkt[Ether].type) == GEONETWORKING_ETHERTYPE
+                )
                 if is_direct_geonet:
                     station_id = "unknown"
                     if Dot11 in pkt and getattr(pkt[Dot11], "addr2", None):
@@ -1288,7 +1224,7 @@ def _parse_with_scapy(
 
 def parse_pcap(
     pcap_path: str,
-    session: Optional[SessionData] = None,
+    session: SessionData | None = None,
     progress_callback=None,
     cancel_check=None,
 ) -> SessionData:
@@ -1310,7 +1246,7 @@ def parse_pcap(
     start_index = len(session.messages)
     if not path.exists():
         raise FileNotFoundError(f"PCAP file not found: {pcap_path}")
-    if not path.suffix.lower() in (".pcap", ".pcapng", ".cap"):
+    if path.suffix.lower() not in (".pcap", ".pcapng", ".cap"):
         raise ValueError(f"Unsupported file format: {path.suffix}")
 
     if _tshark_available():
@@ -1333,9 +1269,7 @@ def parse_pcap(
         )
 
     role = infer_capture_role(str(path))
-    source = session.register_source(
-        str(path), role, len(session.messages) - start_index
-    )
+    source = session.register_source(str(path), role, len(session.messages) - start_index)
     for packet_index, msg in enumerate(session.messages[start_index:], start=1):
         msg.source = MessageSource(
             path=source.path,

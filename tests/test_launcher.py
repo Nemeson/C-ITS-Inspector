@@ -30,6 +30,4 @@ def test_missing_requirements_returns_unavailable_requirement(monkeypatch):
 
     monkeypatch.setattr(launcher, "_is_requirement_available", fake_available)
 
-    assert launcher.missing_requirements(
-        ["installed-package>=1", "missing-package>=2"]
-    ) == ["missing-package>=2"]
+    assert launcher.missing_requirements(["installed-package>=1", "missing-package>=2"]) == ["missing-package>=2"]

@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 import simplekml
 
@@ -20,13 +19,13 @@ logger = logging.getLogger(__name__)
 
 # Distinct colors for message types in KML
 MSG_TYPE_COLORS = {
-    MessageType.CAM: "ff0000ff",      # Blue
-    MessageType.DENM: "ffff0000",     # Red
-    MessageType.SREM: "ffff6600",    # Orange
-    MessageType.SSEM: "ff00ffff",    # Yellow
-    MessageType.MAPEM: "ff00ff00",   # Green
+    MessageType.CAM: "ff0000ff",  # Blue
+    MessageType.DENM: "ffff0000",  # Red
+    MessageType.SREM: "ffff6600",  # Orange
+    MessageType.SSEM: "ff00ffff",  # Yellow
+    MessageType.MAPEM: "ff00ff00",  # Green
     MessageType.SPATEM: "ffff00ff",  # Magenta
-    MessageType.NMEA: "ff800000",    # Dark red / Maroon
+    MessageType.NMEA: "ff800000",  # Dark red / Maroon
 }
 
 # Distinct colors per station for trajectory lines
@@ -85,8 +84,8 @@ def _format_schema_provenance() -> str:
 def export_kml(
     session: SessionData,
     output_dir: Path,
-    active_types: Optional[set[MessageType]] = None,
-    active_stations: Optional[set[str]] = None,
+    active_types: set[MessageType] | None = None,
+    active_stations: set[str] | None = None,
     include_trajectory: bool = True,
     canonical: bool = False,
 ) -> list[Path]:
@@ -145,9 +144,7 @@ def export_kml(
                 )
             if session.merge_groups:
                 view = "kanonisch" if canonical else "alle Beobachtungen"
-                provenance_parts.append(
-                    f"Merge-Gruppen: {len(session.merge_groups)}; Export-Sicht: {view}"
-                )
+                provenance_parts.append(f"Merge-Gruppen: {len(session.merge_groups)}; Export-Sicht: {view}")
             kml.document.description = "<br>".join(provenance_parts)
 
         # Add placemarks for each message
@@ -162,10 +159,7 @@ def export_kml(
 
         # Add trajectory LineString
         if include_trajectory and len(messages) > 1:
-            coords = [
-                (msg.longitude, msg.latitude, msg.altitude or 0)
-                for msg in messages
-            ]
+            coords = [(msg.longitude, msg.latitude, msg.altitude or 0) for msg in messages]
             line = kml.newlinestring(
                 name=f"Trajectory - {station_id}",
                 description=f"Path of station {station_id} ({len(messages)} points)",

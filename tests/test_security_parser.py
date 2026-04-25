@@ -1,19 +1,18 @@
 """Tests for the ETSI TS 103 097 security header parser."""
 
-import struct
 
 from pcap2kml_player.pcap_parser import ITS_PDU_MESSAGE_ID
 from pcap2kml_player.security_parser import (
     _bytes_to_hex,
     _read_length_determinant,
-    _read_uint16,
     _read_uint8,
+    _read_uint16,
     extract_security_from_decoded,
     parse_security_header,
 )
 
-
 # ---------- primitive readers ----------
+
 
 def test_read_uint8_reads_single_byte():
     assert _read_uint8(b"\x42\x99", 0) == (0x42, 1)
@@ -46,6 +45,7 @@ def test_read_length_determinant_empty_returns_zero():
 
 # ---------- hex helper ----------
 
+
 def test_bytes_to_hex_empty_returns_dash():
     assert _bytes_to_hex(b"") == "—"
 
@@ -61,6 +61,7 @@ def test_bytes_to_hex_no_truncation_when_short():
 
 
 # ---------- parse_security_header ----------
+
 
 def test_parse_security_header_empty_returns_none():
     assert parse_security_header(b"") is None
@@ -92,7 +93,7 @@ def test_parse_security_header_unsecured_message():
 def test_parse_security_header_signed_with_digest_signer():
     # Version 2, profile 1 = signed; signer byte 0x40 -> top-2-bits = 1 (digest)
     # Then 8 bytes digest, then ~65 bytes for signature
-    payload = bytes([2, 1, 0x40]) + b"\xAA" * 8 + b"\x00" + b"\xBB" * 64
+    payload = bytes([2, 1, 0x40]) + b"\xaa" * 8 + b"\x00" + b"\xbb" * 64
     info = parse_security_header(payload)
     assert info is not None
     assert info.security_profile == "signed"
@@ -110,13 +111,14 @@ def test_parse_security_header_unknown_profile_name():
 
 
 def test_parse_security_header_brainpool_algo():
-    payload = bytes([2, 1, 0x40]) + b"\xAA" * 8 + b"\x01" + b"\xCC" * 64
+    payload = bytes([2, 1, 0x40]) + b"\xaa" * 8 + b"\x01" + b"\xcc" * 64
     info = parse_security_header(payload)
     assert info is not None
     assert info.signature_algorithm == "ECDSA BrainpoolP256r1"
 
 
 # ---------- extract_security_from_decoded ----------
+
 
 def test_extract_security_from_decoded_cam_with_station_type():
     decoded = {

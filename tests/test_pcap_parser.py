@@ -5,7 +5,6 @@ from pathlib import Path
 from pcap2kml_player.data_model import CaptureRole, MessageType
 from pcap2kml_player.pcap_parser import parse_pcap
 
-
 TESTFILES = Path(__file__).resolve().parent.parent / "testfiles"
 
 
@@ -65,9 +64,7 @@ def test_parse_txa_22082025_pcap_decodes_mapem_and_spatem_payloads() -> None:
 
 
 def test_parse_rsu_srem_extracts_request_correlation_and_lanes() -> None:
-    session = parse_pcap(
-        str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap")
-    )
+    session = parse_pcap(str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap"))
 
     srem_messages = [msg for msg in session.messages if msg.msg_type == MessageType.SREM]
 
@@ -81,9 +78,7 @@ def test_parse_rsu_srem_extracts_request_correlation_and_lanes() -> None:
 
 
 def test_parse_rsu_ssem_extracts_request_id_not_requestor_station_id() -> None:
-    session = parse_pcap(
-        str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_txa.pcap")
-    )
+    session = parse_pcap(str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_txa.pcap"))
 
     ssem_messages = [msg for msg in session.messages if msg.msg_type == MessageType.SSEM]
 
@@ -96,17 +91,12 @@ def test_parse_rsu_ssem_extracts_request_id_not_requestor_station_id() -> None:
 
 
 def test_parse_rsu_rxa_preserves_denm_null_island_when_lpv_is_not_trusted() -> None:
-    session = parse_pcap(
-        str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap")
-    )
+    session = parse_pcap(str(TESTFILES / "2024-04-24_LB72_RSU_PCAP" / "10.28_srem_oev" / "rsu_rxa.pcap"))
 
     denm_messages = [msg for msg in session.messages if msg.msg_type == MessageType.DENM]
 
     assert denm_messages
-    assert any(
-        abs(msg.latitude) < 1e-9 and abs(msg.longitude) < 1e-9
-        for msg in denm_messages
-    )
+    assert any(abs(msg.latitude) < 1e-9 and abs(msg.longitude) < 1e-9 for msg in denm_messages)
     assert not any("Positions-Fallback" in msg.details for msg in denm_messages)
 
 

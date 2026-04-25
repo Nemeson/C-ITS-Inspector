@@ -9,15 +9,17 @@ References:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Iterable, Optional
 
 from .data_model import MessageType, V2xMessage
 
+
 class MovementPhaseState(Enum):
     """SAE J2735 MovementPhaseState."""
+
     UNAVAILABLE = "unavailable"
     DARK = "dark"
     STOP_THEN_PROCEED = "stop-Then-Proceed"
@@ -32,6 +34,7 @@ class MovementPhaseState(Enum):
 
 class ForecastConfidence(Enum):
     """Mapped from ETSI TS 103 301 timeConfidence."""
+
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
@@ -39,6 +42,7 @@ class ForecastConfidence(Enum):
 
 class RequestOperationalStatus(Enum):
     """Operator-facing request state derived from SRM/SSEM correlation."""
+
     PENDING = "pending"
     ACKNOWLEDGED = "acknowledged"
     GRANTED = "granted"
@@ -49,17 +53,19 @@ class RequestOperationalStatus(Enum):
 @dataclass
 class SignalGroupState:
     """Current state of one signal group within an intersection."""
+
     signal_group_id: int
     phase: MovementPhaseState
-    min_end_time: Optional[datetime] = None
-    max_end_time: Optional[datetime] = None
-    likely_time: Optional[datetime] = None
-    time_confidence: Optional[ForecastConfidence] = None
+    min_end_time: datetime | None = None
+    max_end_time: datetime | None = None
+    likely_time: datetime | None = None
+    time_confidence: ForecastConfidence | None = None
 
 
 @dataclass
 class PhaseSegment:
     """One contiguous forecast segment for a signal group."""
+
     phase: MovementPhaseState
     start: datetime
     end: datetime
@@ -69,6 +75,7 @@ class PhaseSegment:
 @dataclass
 class SpatForecast:
     """Phase segments for the next ~30 s per signal group."""
+
     intersection_id: int
     horizon_seconds: float
     segments_by_group: dict[int, list[PhaseSegment]] = field(default_factory=dict)
@@ -77,14 +84,15 @@ class SpatForecast:
 @dataclass
 class IntersectionState:
     """MAP + latest SPaT for one intersection."""
+
     intersection_id: int
-    map_revision: Optional[int] = None
-    spat_revision: Optional[int] = None
-    last_map_time: Optional[datetime] = None
-    last_spat_time: Optional[datetime] = None
-    map_reference_point: Optional[tuple[float, float]] = None
+    map_revision: int | None = None
+    spat_revision: int | None = None
+    last_map_time: datetime | None = None
+    last_spat_time: datetime | None = None
+    map_reference_point: tuple[float, float] | None = None
     lane_stopline_points: dict[int, tuple[float, float]] = field(default_factory=dict)
-    clock_skew_seconds: Optional[float] = None
+    clock_skew_seconds: float | None = None
     signal_groups: dict[int, SignalGroupState] = field(default_factory=dict)
 
     @property
@@ -98,22 +106,23 @@ class IntersectionState:
 @dataclass
 class ActiveRequest:
     """A tracked SREM, optionally correlated with its SSEM response."""
+
     request_id: int
     sequence_number: int
     intersection_id: int
     station_id: str
-    importance_level: Optional[int] = None
-    requestor_role: Optional[str] = None
-    in_lane: Optional[int] = None
-    out_lane: Optional[int] = None
-    eta: Optional[datetime] = None
-    requested_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    responded_at: Optional[datetime] = None
-    ssem_status: Optional[str] = None
+    importance_level: int | None = None
+    requestor_role: str | None = None
+    in_lane: int | None = None
+    out_lane: int | None = None
+    eta: datetime | None = None
+    requested_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    responded_at: datetime | None = None
+    ssem_status: str | None = None
     source_files: tuple[str, ...] = ()
     source_roles: tuple[str, ...] = ()
-    merge_group_id: Optional[str] = None
-    merge_confidence: Optional[float] = None
+    merge_group_id: str | None = None
+    merge_confidence: float | None = None
 
     @property
     def is_pending(self) -> bool:
@@ -123,29 +132,31 @@ class ActiveRequest:
 @dataclass
 class SceneSnapshot:
     """Everything the visualization assistant needs at one timeline position."""
+
     timeline_position: datetime
     intersections: dict[int, IntersectionState] = field(default_factory=dict)
     forecasts: dict[int, SpatForecast] = field(default_factory=dict)
     active_requests: list[ActiveRequest] = field(default_factory=list)
     request_states: list[ActiveRequest] = field(default_factory=list)
-    request_visuals_by_intersection: dict[int, list["RequestVisualState"]] = field(default_factory=dict)
-    eta_verifications: list["EtaVerification"] = field(default_factory=list)
+    request_visuals_by_intersection: dict[int, list[RequestVisualState]] = field(default_factory=dict)
+    eta_verifications: list[EtaVerification] = field(default_factory=list)
 
 
 @dataclass
 class RequestVisualState:
     """Map/UI-ready state for rendering one request on lanes and connections."""
+
     request_id: int
     sequence_number: int
     intersection_id: int
     station_id: str
     status: RequestOperationalStatus
-    importance_level: Optional[int] = None
-    in_lane: Optional[int] = None
-    out_lane: Optional[int] = None
-    ssem_status: Optional[str] = None
-    requested_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    responded_at: Optional[datetime] = None
+    importance_level: int | None = None
+    in_lane: int | None = None
+    out_lane: int | None = None
+    ssem_status: str | None = None
+    requested_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    responded_at: datetime | None = None
     is_dominant: bool = False
     display_rank: int = 0
 
@@ -153,6 +164,7 @@ class RequestVisualState:
 @dataclass
 class EtaVerification:
     """Predicted-vs-actual arrival timing for one SREM request."""
+
     request_id: int
     sequence_number: int
     intersection_id: int
@@ -170,6 +182,7 @@ class EtaVerification:
 @dataclass
 class PrioritizationIssue:
     """Operator-facing SREM/SSEM prioritization issue shown outside the map."""
+
     issue_type: str
     severity: str
     intersection_id: int
@@ -178,20 +191,21 @@ class PrioritizationIssue:
     station_id: str
     message: str
     timestamp: datetime
-    in_lane: Optional[int] = None
-    out_lane: Optional[int] = None
-    status: Optional[str] = None
-    delay_seconds: Optional[float] = None
+    in_lane: int | None = None
+    out_lane: int | None = None
+    status: str | None = None
+    delay_seconds: float | None = None
     source_summary: str = "-"
     source_files: tuple[str, ...] = ()
     source_roles: tuple[str, ...] = ()
-    merge_group_id: Optional[str] = None
-    merge_confidence: Optional[float] = None
+    merge_group_id: str | None = None
+    merge_confidence: float | None = None
 
 
 @dataclass
 class PrioritizationIssueOccurrence:
     """First stream position where one prioritization issue becomes visible."""
+
     issue: PrioritizationIssue
     message_index: int
 
@@ -202,10 +216,12 @@ class PrioritizationIssueOccurrence:
 
 # Phase-Klassifikation nach SAE J2735 MovementPhaseState.
 # "Movement allowed" = Fahrzeug darf fahren (inkl. permissive = Gegenverkehr moeglich).
-_MOVEMENT_ALLOWED_PHASES = frozenset({
-    MovementPhaseState.PERMISSIVE_MOVEMENT_ALLOWED,
-    MovementPhaseState.PROTECTED_MOVEMENT_ALLOWED,
-})
+_MOVEMENT_ALLOWED_PHASES = frozenset(
+    {
+        MovementPhaseState.PERMISSIVE_MOVEMENT_ALLOWED,
+        MovementPhaseState.PROTECTED_MOVEMENT_ALLOWED,
+    }
+)
 
 # Priorisierter Timeout nach ETSI TS 103 301 importanceLevel (0..14).
 # Hintergrund: Rettungs-/OEPV-Prioritaeten (>=10) sind zeitkritisch, deshalb striktere Frist.
@@ -229,8 +245,7 @@ def find_overdue_requests(
             continue
         threshold = (
             _TIMEOUT_HIGH_PRIORITY_S
-            if req.importance_level is not None
-            and req.importance_level >= _HIGH_PRIORITY_THRESHOLD
+            if req.importance_level is not None and req.importance_level >= _HIGH_PRIORITY_THRESHOLD
             else _TIMEOUT_DEFAULT_S
         )
         if (now - req.requested_at).total_seconds() > threshold:
@@ -244,7 +259,7 @@ def is_flow_allowed(
     ingress_lane: int,
     egress_lane: int,
     ingress_signal_group: int,
-) -> tuple[bool, Optional[datetime], Optional[ForecastConfidence]]:
+) -> tuple[bool, datetime | None, ForecastConfidence | None]:
     """Check whether the ingress-to-egress flow is currently allowed.
 
     Returns (is_allowed_now, estimated_release_time, confidence).
@@ -344,9 +359,7 @@ def build_scene_snapshot(
             response = _extract_ssem_response(msg)
             if response is None:
                 continue
-            request = requests.get(
-                (response["intersection_id"], response["request_id"], response["sequence_number"])
-            )
+            request = requests.get((response["intersection_id"], response["request_id"], response["sequence_number"]))
             if request is None:
                 continue
             request.responded_at = msg.timestamp
@@ -540,7 +553,11 @@ def build_prioritization_issues(scene: SceneSnapshot) -> list[PrioritizationIssu
                 )
             )
         granted_request = granted_windows.get(key)
-        if granted_request is None or granted_request.responded_at is None or granted_request.responded_at > verification.actual_arrival:
+        if (
+            granted_request is None
+            or granted_request.responded_at is None
+            or granted_request.responded_at > verification.actual_arrival
+        ):
             issues.append(
                 _issue_from_request(
                     request,
@@ -583,9 +600,7 @@ def _collect_prioritization_issue_occurrences_uncached(
             response = _extract_ssem_response(msg)
             if response is None:
                 continue
-            request = requests.get(
-                (response["intersection_id"], response["request_id"], response["sequence_number"])
-            )
+            request = requests.get((response["intersection_id"], response["request_id"], response["sequence_number"]))
             if request is None:
                 continue
             request.responded_at = msg.timestamp
@@ -621,7 +636,7 @@ def _collect_prioritization_issue_occurrences_uncached(
 
 
 _ISSUE_HISTORY_CACHE: dict[
-    tuple[int, int, Optional[datetime]],
+    tuple[int, int, datetime | None],
     list[PrioritizationIssueOccurrence],
 ] = {}
 
@@ -657,9 +672,7 @@ def _append_response_issues(
     """Append SSEM-derived issues without rebuilding the whole scene."""
     status = get_request_operational_status(request, timestamp)
     response_delay = (
-        (request.responded_at - request.requested_at).total_seconds()
-        if request.responded_at is not None
-        else None
+        (request.responded_at - request.requested_at).total_seconds() if request.responded_at is not None else None
     )
 
     if status == RequestOperationalStatus.REJECTED:
@@ -797,8 +810,8 @@ def _issue_from_request(
     severity: str,
     message: str,
     timestamp: datetime,
-    status: Optional[str],
-    delay_seconds: Optional[float] = None,
+    status: str | None,
+    delay_seconds: float | None = None,
 ) -> PrioritizationIssue:
     """Create a side-panel issue from one request."""
     source_summary = _format_request_source_summary(request)
@@ -851,7 +864,7 @@ def _iter_spat_intersections(msg: V2xMessage) -> list[dict]:
     return []
 
 
-def _extract_intersection_id(intersection: dict) -> Optional[int]:
+def _extract_intersection_id(intersection: dict) -> int | None:
     """Extract the numeric intersection id from a MAPEM/SPATEM entry."""
     return _coerce_int(intersection.get("intersectionId", intersection.get("id")))
 
@@ -981,7 +994,7 @@ def _extract_phase_segments(
     return segments
 
 
-def _build_active_request(msg: V2xMessage) -> Optional[ActiveRequest]:
+def _build_active_request(msg: V2xMessage) -> ActiveRequest | None:
     """Create an ActiveRequest from an SREM message."""
     request_id = _coerce_int(msg.decoded_data.get("requestId"))
     sequence_number = _coerce_int(msg.decoded_data.get("sequenceNumber"))
@@ -1007,18 +1020,13 @@ def _build_active_request(msg: V2xMessage) -> Optional[ActiveRequest]:
     )
 
 
-def _extract_ssem_response(msg: V2xMessage) -> Optional[dict[str, int | str]]:
+def _extract_ssem_response(msg: V2xMessage) -> dict[str, int | str] | None:
     """Extract SSEM correlation data."""
     request_id = _coerce_int(msg.decoded_data.get("requestId"))
     sequence_number = _coerce_int(msg.decoded_data.get("sequenceNumber"))
     intersection_id = _coerce_int(msg.decoded_data.get("intersectionId"))
     status = _coerce_str(msg.decoded_data.get("requestState"))
-    if (
-        request_id is None
-        or sequence_number is None
-        or intersection_id is None
-        or status is None
-    ):
+    if request_id is None or sequence_number is None or intersection_id is None or status is None:
         return None
     return {
         "request_id": request_id,
@@ -1061,7 +1069,7 @@ def _format_request_source_summary(request: ActiveRequest) -> str:
     return f"{roles}: {files}{merge}"
 
 
-def _parse_phase(value: object) -> Optional[MovementPhaseState]:
+def _parse_phase(value: object) -> MovementPhaseState | None:
     """Parse a raw SPAT eventState into the enum used by the app."""
     if isinstance(value, MovementPhaseState):
         return value
@@ -1094,7 +1102,7 @@ def _map_time_confidence(value: object) -> ForecastConfidence:
     return ForecastConfidence.MEDIUM
 
 
-def _first_number(*values: object) -> Optional[float]:
+def _first_number(*values: object) -> float | None:
     """Return the first value that can be interpreted as a number."""
     for value in values:
         if isinstance(value, (int, float)):
@@ -1121,7 +1129,7 @@ def get_clock_skew_warnings(
     return warnings
 
 
-def get_eta_accuracy_seconds(scene: SceneSnapshot) -> Optional[float]:
+def get_eta_accuracy_seconds(scene: SceneSnapshot) -> float | None:
     """Return mean absolute ETA error across all verified requests."""
     if not scene.eta_verifications:
         return None
@@ -1132,14 +1140,14 @@ def _estimate_spat_clock_skew_seconds(
     *,
     packet_timestamp: datetime,
     intersection: dict,
-) -> Optional[float]:
+) -> float | None:
     """Compare DSRC/SPAT time-of-year against the PCAP timestamp."""
     moy = _coerce_int(intersection.get("moy"))
     timestamp_ms = _coerce_int(intersection.get("timeStamp"))
     if moy is None or timestamp_ms is None:
         return None
 
-    packet_utc = packet_timestamp.astimezone(timezone.utc)
+    packet_utc = packet_timestamp.astimezone(UTC)
     seconds_of_year = (
         (packet_utc.timetuple().tm_yday - 1) * 86400
         + packet_utc.hour * 3600
@@ -1157,7 +1165,7 @@ def _estimate_spat_clock_skew_seconds(
     return diff
 
 
-def _extract_map_reference_point(intersection: dict) -> Optional[tuple[float, float]]:
+def _extract_map_reference_point(intersection: dict) -> tuple[float, float] | None:
     """Extract a normalized MAP reference point in decimal degrees."""
     for key in ("refPoint", "referencePoint", "refPos", "referencePosition"):
         value = intersection.get(key)
@@ -1264,9 +1272,9 @@ def _ensure_intersection_id(
 def _verify_eta_against_cam(
     *,
     request: ActiveRequest,
-    intersection: Optional[IntersectionState],
+    intersection: IntersectionState | None,
     cam_history: list[V2xMessage],
-) -> Optional[EtaVerification]:
+) -> EtaVerification | None:
     """Compare the requested ETA with the first CAM arrival at the lane stopline."""
     if request.eta is None or intersection is None:
         return None
@@ -1282,7 +1290,7 @@ def _verify_eta_against_cam(
         return None
 
     target_lat, target_lon = target_point
-    arrival: Optional[datetime] = None
+    arrival: datetime | None = None
     for cam_msg in cam_history:
         if cam_msg.timestamp < request.requested_at:
             continue
@@ -1309,7 +1317,7 @@ def _verify_eta_against_cam(
     )
 
 
-def _coerce_lat_lon(value: object) -> Optional[tuple[float, float]]:
+def _coerce_lat_lon(value: object) -> tuple[float, float] | None:
     """Normalize reference-point structures to decimal degrees."""
     if not isinstance(value, dict):
         return None
@@ -1346,7 +1354,7 @@ def _is_leap_year(year: int) -> bool:
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
 
-def _coerce_int(value: object) -> Optional[int]:
+def _coerce_int(value: object) -> int | None:
     """Best-effort integer normalization for nested decoded fields."""
     if isinstance(value, bool):
         return int(value)
@@ -1369,7 +1377,7 @@ def _coerce_int(value: object) -> Optional[int]:
     return None
 
 
-def _coerce_str(value: object) -> Optional[str]:
+def _coerce_str(value: object) -> str | None:
     """Normalize a value to string if it is meaningfully present."""
     if value is None:
         return None
@@ -1384,7 +1392,7 @@ def _coerce_str(value: object) -> Optional[str]:
     return str(value)
 
 
-def _coerce_datetime(value: object, *, reference_time: Optional[datetime] = None) -> Optional[datetime]:
+def _coerce_datetime(value: object, *, reference_time: datetime | None = None) -> datetime | None:
     """Normalize ETA-like structures into UTC datetimes when possible."""
     if isinstance(value, datetime):
         return value
@@ -1398,7 +1406,7 @@ def _coerce_datetime(value: object, *, reference_time: Optional[datetime] = None
             if second_of_minute is not None:
                 if second_of_minute > 60:
                     second_of_minute /= 1000.0
-                base = reference_time.astimezone(timezone.utc).replace(second=0, microsecond=0)
+                base = reference_time.astimezone(UTC).replace(second=0, microsecond=0)
                 candidate = base + timedelta(seconds=second_of_minute)
                 if candidate < reference_time - timedelta(seconds=30):
                     candidate += timedelta(minutes=1)

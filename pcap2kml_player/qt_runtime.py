@@ -6,7 +6,6 @@ import importlib.util
 import os
 from pathlib import Path
 
-
 DEFAULT_CHROMIUM_FLAGS = (
     "--disable-direct-composition",
     "--disable-features=DirectComposition,DirectCompositionVideoOverlays,UseHDRTransferFunction",

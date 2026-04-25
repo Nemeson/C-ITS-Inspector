@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from .data_model import MessageType, V2xMessage
 
@@ -17,29 +16,29 @@ logger = logging.getLogger(__name__)
 # Regex patterns for NMEA sentences
 _GPGGA_RE = re.compile(
     r"^\$GPGGA,"
-    r"(\d{6})(\.\d+)?,"   # time: HHMMSS.ss
+    r"(\d{6})(\.\d+)?,"  # time: HHMMSS.ss
     r"(\d{2}\d{2}\.\d+),"  # latitude: DDMM.MMMMM
     r"([NS]),"
     r"(\d{3}\d{2}\.\d+),"  # longitude: DDDMM.MMMMM
     r"([EW]),"
-    r"(\d),"               # fix quality
-    r"(\d+)?,"             # number of satellites
-    r"([\d.]*)?,"          # HDOP
-    r"([\d.]*)?,"          # altitude
+    r"(\d),"  # fix quality
+    r"(\d+)?,"  # number of satellites
+    r"([\d.]*)?,"  # HDOP
+    r"([\d.]*)?,"  # altitude
     r"M?,"
-    r"([\d.]*)?,"          # geoidal separation
+    r"([\d.]*)?,"  # geoidal separation
 )
 
 _GPRMC_RE = re.compile(
     r"^\$GPRMC,"
-    r"(\d{6})(\.\d+)?,"   # time: HHMMSS.ss
-    r"([AV]),"              # status: A=valid, V=invalid
+    r"(\d{6})(\.\d+)?,"  # time: HHMMSS.ss
+    r"([AV]),"  # status: A=valid, V=invalid
     r"(\d{2}\d{2}\.\d+),"  # latitude: DDMM.MMMMM
     r"([NS]),"
     r"(\d{3}\d{2}\.\d+),"  # longitude: DDDMM.MMMMM
     r"([EW]),"
-    r"([\d.]+)?,"           # speed in knots
-    r"([\d.]+)?,"           # track angle (heading)
+    r"([\d.]+)?,"  # speed in knots
+    r"([\d.]+)?,"  # track angle (heading)
     r"(\d{2}\d{2}\d{2})?"  # date: DDMMYY
 )
 
@@ -77,11 +76,11 @@ def _parse_nmea_time(time_str: str, frac: str = "", date_str: str = "") -> datet
         day = int(date_str[0:2])
         month = int(date_str[2:4])
         year = 2000 + int(date_str[4:6])
-        return datetime(year, month, day, hour, minute, second, microsecond, tzinfo=timezone.utc)
+        return datetime(year, month, day, hour, minute, second, microsecond, tzinfo=UTC)
 
     # Fallback: use today's date
-    now = datetime.now(tz=timezone.utc)
-    return datetime(now.year, now.month, now.day, hour, minute, second, microsecond, tzinfo=timezone.utc)
+    now = datetime.now(tz=UTC)
+    return datetime(now.year, now.month, now.day, hour, minute, second, microsecond, tzinfo=UTC)
 
 
 def _validate_nmea_checksum(sentence: str) -> bool:
@@ -104,7 +103,7 @@ def _validate_nmea_checksum(sentence: str) -> bool:
         return False
 
 
-def parse_gpgga(sentence: str, default_station_id: str = "GPS") -> Optional[V2xMessage]:
+def parse_gpgga(sentence: str, default_station_id: str = "GPS") -> V2xMessage | None:
     """Parse a $GPGGA sentence into a V2xMessage."""
     sentence = sentence.strip()
     if not sentence:
@@ -136,7 +135,7 @@ def parse_gpgga(sentence: str, default_station_id: str = "GPS") -> Optional[V2xM
         return None
 
 
-def parse_gprmc(sentence: str, default_station_id: str = "GPS") -> Optional[V2xMessage]:
+def parse_gprmc(sentence: str, default_station_id: str = "GPS") -> V2xMessage | None:
     """Parse a $GPRMC sentence into a V2xMessage."""
     sentence = sentence.strip()
     if not sentence:
@@ -171,7 +170,7 @@ def parse_gprmc(sentence: str, default_station_id: str = "GPS") -> Optional[V2xM
         return None
 
 
-def parse_nmea_sentence(data: bytes, default_station_id: str = "GPS") -> Optional[V2xMessage]:
+def parse_nmea_sentence(data: bytes, default_station_id: str = "GPS") -> V2xMessage | None:
     """Try to parse bytes as an NMEA sentence.
 
     Checks for GPGGA first, then GPRMC. Returns None if the data

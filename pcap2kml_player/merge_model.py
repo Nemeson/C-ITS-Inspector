@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from math import asin, cos, radians, sin, sqrt
-from typing import Optional
 
 from .data_model import CaptureRole, MergedObservation, MessageType, V2xMessage, message_identity_key
 
@@ -232,7 +231,7 @@ def _same_source(left: V2xMessage, right: V2xMessage) -> bool:
     return left.source.path == right.source.path
 
 
-def _distance_m(left: V2xMessage, right: V2xMessage) -> Optional[float]:
+def _distance_m(left: V2xMessage, right: V2xMessage) -> float | None:
     if not all((-90 <= value <= 90) for value in (left.latitude, right.latitude)):
         return None
     if not all((-180 <= value <= 180) for value in (left.longitude, right.longitude)):
@@ -255,7 +254,7 @@ def _speed_heading_compatible(left: V2xMessage, right: V2xMessage) -> bool:
     return left.speed is not None or left.heading is not None
 
 
-def _coerce_int(value: object) -> Optional[int]:
+def _coerce_int(value: object) -> int | None:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):

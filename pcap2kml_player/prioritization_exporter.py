@@ -109,9 +109,7 @@ def _issue_to_row(issue: PrioritizationIssue) -> dict[str, object]:
         "source_roles": ", ".join(issue.source_roles),
         "source_files": ", ".join(issue.source_files),
         "merge_group_id": issue.merge_group_id or "",
-        "merge_confidence": (
-            "" if issue.merge_confidence is None else f"{issue.merge_confidence:.3f}"
-        ),
+        "merge_confidence": ("" if issue.merge_confidence is None else f"{issue.merge_confidence:.3f}"),
     }
 
 
@@ -132,11 +130,7 @@ def _build_report(issues: list[PrioritizationIssue]) -> dict[str, object]:
         if issue.issue_type == "LATE_GRANTED" and issue.delay_seconds is not None:
             grant_delays.append(issue.delay_seconds)
 
-    mean_late_grant_delay = (
-        sum(grant_delays) / len(grant_delays)
-        if grant_delays
-        else None
-    )
+    mean_late_grant_delay = sum(grant_delays) / len(grant_delays) if grant_delays else None
     return {
         "total_issues": len(issues),
         "issues_by_type": dict(sorted(issue_types.items())),

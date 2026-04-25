@@ -21,10 +21,10 @@ from pcap2kml_player.qt_runtime import configure_qt_runtime_environment, prefer_
 
 configure_qt_runtime_environment()
 
-from pcap2kml_player.map_backend import selected_map_backend_name
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
+from pcap2kml_player.map_backend import selected_map_backend_name
 from pcap2kml_player.ui.main_window import MainWindow
 
 
