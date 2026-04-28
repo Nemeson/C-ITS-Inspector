@@ -64,7 +64,6 @@ omit = [
     "pcap2kml_player/main.py",
     "pcap2kml_player/ui/*",
     "pcap2kml_player/map_widget.py",
-    "pcap2kml_player/native_map_widget.py",
 ]
 
 [tool.coverage.report]

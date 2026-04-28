@@ -66,7 +66,7 @@
 | security_parser.py | 95% | 90% | `_scan_assurance`, `_scan_station_type`, `_scan_validity` |
 | player_controller.py | 95% | 90% | `jump_to_next_issue`, `set_speed`, `toggle_play` |
 | pcap_parser.py | 90% | 85% | `parse_pcap`, `_normalize_map_connection`, `geolocate` |
-| map_backend.py | 95% | 90% | `selected_map_backend_name` |
+| map_backend.py | 95% | 100% | `MAP_PERFORMANCE_*` |
 | asn1_schemas.py | 90% | 85% | `update_from_git`, `compile_schemas` |
 | scene_model.py | 90% | 85% | `build_scene_snapshot`, `_extract_phase_segments` |
 | merge_model.py | 90% | 85% | `build_merge_groups` |
@@ -301,7 +301,6 @@ omit = [
     "pcap2kml_player/main.py",
     "pcap2kml_player/ui/*",
     "pcap2kml_player/map_widget.py",
-    "pcap2kml_player/native_map_widget.py",
 ]
 
 [tool.coverage.report]
@@ -317,7 +316,6 @@ skip_covered = false
 | `main.py` | Entrypoint, Qt-Init | 100% OK |
 | `ui/main_window.py` | GUI, Qt-Events | 50% OK |
 | `map_widget.py` | WebEngine-JS | 50% OK |
-| `native_map_widget.py` | Qt-Canvas | 50% OK |
 
 ---
 

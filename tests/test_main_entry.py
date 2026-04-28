@@ -69,7 +69,6 @@ def test_main_logs_qt_runtime_and_uses_software_opengl_when_preferred(monkeypatc
     monkeypatch.setattr(main_module, "install_global_exception_handler", lambda _app: None)
     monkeypatch.setattr(main_module, "check_runtime_dependencies", lambda: [])
     monkeypatch.setattr(main_module, "prefer_software_rendering", lambda: True)
-    monkeypatch.setattr(main_module, "selected_map_backend_name", lambda: "native")
     monkeypatch.setenv("QT_OPENGL", "software")
     monkeypatch.setenv("QT_OPENGL_DLL", r"C:\PyQt6\Qt6\bin\opengl32sw.dll")
     monkeypatch.setenv("QSG_RHI_PREFER_SOFTWARE_RENDERER", "1")
@@ -80,7 +79,7 @@ def test_main_logs_qt_runtime_and_uses_software_opengl_when_preferred(monkeypatc
 
     assert exit_code == 0
     assert any("Qt runtime: software=True" in message for message in caplog.messages)
-    assert any("map_backend=native" in message for message in caplog.messages)
+    assert any("map_backend=webengine" in message for message in caplog.messages)
     assert any("QT_OPENGL_DLL=C:\\PyQt6\\Qt6\\bin\\opengl32sw.dll" in message for message in caplog.messages)
     assert any(
         attr == main_module.Qt.ApplicationAttribute.AA_UseSoftwareOpenGL and enabled is True
@@ -106,7 +105,6 @@ def test_main_skips_software_attribute_when_gpu_is_opted_in(monkeypatch, caplog)
     monkeypatch.setattr(main_module, "install_global_exception_handler", lambda _app: None)
     monkeypatch.setattr(main_module, "check_runtime_dependencies", lambda: [])
     monkeypatch.setattr(main_module, "prefer_software_rendering", lambda: False)
-    monkeypatch.setattr(main_module, "selected_map_backend_name", lambda: "webengine")
     monkeypatch.delenv("QT_OPENGL", raising=False)
     monkeypatch.delenv("QSG_RHI_PREFER_SOFTWARE_RENDERER", raising=False)
     monkeypatch.setenv("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-direct-composition")

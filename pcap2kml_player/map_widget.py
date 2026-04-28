@@ -1798,6 +1798,8 @@ class MapWidget(QWebEngineView):
         self._disposed = False
         self._latest_telemetry: MapRenderTelemetry | None = None
         self._last_payload_was_replaced = False
+        self._page_load_failures = 0
+        self._page_reload_timer: QTimer | None = None
 
         self._bridge.message_clicked.connect(self._on_marker_clicked)
         self.loadFinished.connect(self._on_load_finished)
@@ -2200,9 +2202,23 @@ class MapWidget(QWebEngineView):
         self._queued_render_payload_script = None
         self._render_payload_started_at = None
         if not ok:
-            logger.warning("Leaflet map page did not finish loading")
-            self._emit_map_issue("Karten-WebView konnte nicht geladen werden")
+            self._page_load_failures = self.__dict__.get("_page_load_failures", 0) + 1
+            logger.warning(
+                "Leaflet map page did not finish loading (attempt %d)",
+                self._page_load_failures,
+            )
+            if self._page_load_failures <= 3:
+                delay_ms = int(1000 * (2 ** (self._page_load_failures - 1)))
+                logger.info("Scheduling map page reload in %dms", delay_ms)
+                timer = QTimer()
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._reload_map_page_after_failure)
+                timer.start(delay_ms)
+                self._page_reload_timer = timer
+                return
+            self._emit_map_issue("Karten-WebView konnte nicht geladen werden (3 Versuche fehlgeschlagen)")
             return
+        self._page_load_failures = 0
         logger.info("WebEngine loadFinished(ok=True) — starting Leaflet bootstrap probe")
         self._execute_js(
             "typeof L !== 'undefined' && typeof map !== 'undefined'",
@@ -2212,6 +2228,14 @@ class MapWidget(QWebEngineView):
         self._pending_scripts = []
         for script in pending:
             self._run_js(script)
+
+    def _reload_map_page_after_failure(self) -> None:
+        """Retry loading the map page after a previous loadFinished(ok=False)."""
+        if self.__dict__.get("_disposed", False) or _qt_object_deleted(self):
+            return
+        logger.info("Reloading map page after load failure")
+        self.setHtml(_leaflet_runtime_html(), QUrl.fromLocalFile(str(_asset_base_path()) + "/"))
+        self._schedule_bootstrap_timeout()
 
     def _on_bootstrap_probe_finished(self, result=None) -> None:
         """Report a visible issue if the page loaded but Leaflet did not bootstrap."""
@@ -2277,7 +2301,13 @@ class MapWidget(QWebEngineView):
         )
         self._bootstrap_probe_succeeded = False
         self._page_ready = False
+        self._render_payload_in_flight = False
+        self._queued_render_payload_script = None
+        self._render_payload_started_at = None
         self._emit_map_issue(f"WebEngine Render-Prozess beendet (Status={termination_status}, Code={exit_code})")
+        logger.info("Reloading map page after render process termination")
+        self.setHtml(_leaflet_runtime_html(), QUrl.fromLocalFile(str(_asset_base_path()) + "/"))
+        self._schedule_bootstrap_timeout()
 
     def _run_js(self, script: str) -> None:
         """Execute JavaScript in the web page."""
@@ -2359,7 +2389,19 @@ class MapWidget(QWebEngineView):
         if not self.__dict__.get("_render_payload_in_flight", False) or started_at is None:
             return
         if time.monotonic() - started_at >= MAP_RENDER_STALL_SECONDS:
-            self._emit_map_issue(f"Karten-Renderpayload laeuft seit mehr als {MAP_RENDER_STALL_SECONDS:.0f}s")
+            logger.warning(
+                "Render payload stall detected after %.0fs — resetting in-flight flag (generation %d)",
+                MAP_RENDER_STALL_SECONDS,
+                generation,
+            )
+            self._render_payload_in_flight = False
+            self._render_payload_started_at = None
+            queued = self._queued_render_payload_script
+            self._queued_render_payload_script = None
+            self._emit_map_issue(f"Karten-Renderpayload lief seit >{MAP_RENDER_STALL_SECONDS:.0f}s — Flag zurückgesetzt")
+            if queued is not None:
+                logger.info("Flushing queued render payload after stall reset")
+                self._run_js(queued)
 
     def _on_java_script_issue(self, message: str) -> None:
         """Forward JavaScript errors from the map page to the main window."""

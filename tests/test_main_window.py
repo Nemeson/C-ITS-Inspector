@@ -14,8 +14,6 @@ from pcap2kml_player.ui.main_window import (
     COL_SPEED_HEADING,
     COL_STATION,
     COL_TIMESTAMP,
-    MAP_BACKEND_NATIVE,
-    MAP_BACKEND_WEBENGINE,
     MAP_PLAYBACK_RENDER_INTERVAL_SECONDS,
     MEMORY_DIAGNOSTIC_THRESHOLD_MB,
     PERFORMANCE_MODE_DIAGNOSTIC,
@@ -562,80 +560,30 @@ def test_performance_mode_is_forwarded_to_map_and_persisted():
     assert window._settings.values["ui/performance_mode"] == PERFORMANCE_MODE_SAVER
 
 
-def test_map_backend_change_replaces_widget_and_rerenders_session(monkeypatch):
-    window = MainWindow.__new__(MainWindow)
-    old_map = _FakeMapWidget()
-    new_map = _FakeMapWidget()
-    window._map_widget = old_map
-    window._map_backend = MAP_BACKEND_WEBENGINE
-    window._map_backend_combo = _FakeCombo()
-    window._map_backend_combo.addItem("Leaflet", MAP_BACKEND_WEBENGINE)
-    window._map_backend_combo.addItem("Native", MAP_BACKEND_NATIVE)
-    window._map_backend_combo.setCurrentIndex(1)
-    window._map_area_layout = _FakeMapAreaLayout()
-    window._settings = _FakeSettings()
-    window._statusbar = _FakeStatusBar()
-    window._session = SessionData(messages=[_message(0)])
-    window._player = _FakePlayerForMapThrottle()
-    window._performance_mode = PERFORMANCE_MODE_SAVER
-    window._memory_watch_label = _FakeLabel()
-    window._map_safe_mode_active = True
-    window._map_issue_history = ["ReferenceError"]
-    monkeypatch.setattr(main_window_module, "create_map_widget", lambda parent=None, backend=None: new_map)
-
-    window._on_map_backend_changed()
-
-    assert window._map_backend == MAP_BACKEND_NATIVE
-    assert window._settings.values["ui/map_backend"] == MAP_BACKEND_NATIVE
-    assert window._map_widget is new_map
-    assert window._map_area_layout.removed == [old_map]
-    assert window._map_area_layout.inserted == [(0, new_map, 1)]
-    assert old_map.disposed is True
-    assert old_map.parent is None
-    assert old_map.deleted is True
-    assert new_map.modes[-1] == PERFORMANCE_MODE_SAVER
-    assert new_map.loaded_messages[-1] == window._player._messages
-    assert window._map_safe_mode_active is False
-    assert window._map_issue_history == []
-
-
-def test_webengine_bootstrap_issue_switches_to_native_without_persisting(monkeypatch):
-    window = MainWindow.__new__(MainWindow)
-    old_map = _FakeMapWidget()
-    new_map = _FakeMapWidget()
-    window._map_widget = old_map
-    window._map_backend = MAP_BACKEND_WEBENGINE
-    window._map_backend_combo = _FakeCombo()
-    window._map_backend_combo.addItem("Leaflet", MAP_BACKEND_WEBENGINE)
-    window._map_backend_combo.addItem("Native", MAP_BACKEND_NATIVE)
-    window._map_backend_combo.setCurrentIndex(0)
-    window._map_area_layout = _FakeMapAreaLayout()
-    window._settings = _FakeSettings()
-    window._statusbar = _FakeStatusBar()
-    window._session = SessionData(messages=[_message(0)])
-    window._player = _FakePlayerForMapThrottle()
-    window._performance_mode = PERFORMANCE_MODE_NORMAL
-    window._memory_watch_label = _FakeLabel()
-    window._map_safe_mode_active = False
-    window._map_issue_history = []
-    monkeypatch.setattr(main_window_module, "create_map_widget", lambda parent=None, backend=None: new_map)
-
-    window._on_map_issue_detected("Karten-WebView Initialisierungstimeout nach 6s")
-
-    assert window._map_backend == MAP_BACKEND_NATIVE
-    assert "ui/map_backend" not in window._settings.values
-    assert window._map_backend_combo.currentData() == MAP_BACKEND_NATIVE
-    assert window._map_area_layout.removed == [old_map]
-    assert window._map_area_layout.inserted == [(0, new_map, 1)]
-    assert old_map.disposed is True
-    assert new_map.loaded_messages[-1] == window._player._messages
-    assert "Native-Fallback" in window._statusbar.messages[-1]
-
-
-def test_nonfatal_map_issue_keeps_webengine_backend():
+def test_single_map_issue_shows_status_message_without_fallback():
     window = MainWindow.__new__(MainWindow)
     window._map_widget = _FakeMapWidget()
-    window._map_backend = MAP_BACKEND_WEBENGINE
+    window._performance_mode = PERFORMANCE_MODE_NORMAL
+    window._performance_auto_downgraded = False
+    window._performance_mode_combo = _FakeCombo()
+    window._performance_mode_combo.addItem("Normal", PERFORMANCE_MODE_NORMAL)
+    window._performance_mode_combo.addItem("Diagnose", PERFORMANCE_MODE_DIAGNOSTIC)
+    window._settings = _FakeSettings()
+    window._memory_watch_label = _FakeLabel()
+    window._statusbar = _FakeStatusBar()
+    window._map_issue_history = []
+    window._map_safe_mode_active = False
+
+    window._on_map_issue_detected("WebEngine Render-Prozess beendet")
+
+    assert window._map_safe_mode_active is False
+    assert window._map_issue_history == ["WebEngine Render-Prozess beendet"]
+    assert "Kartenhinweis" in window._statusbar.messages[-1]
+
+
+def test_nonfatal_map_issue_shows_status_hint():
+    window = MainWindow.__new__(MainWindow)
+    window._map_widget = _FakeMapWidget()
     window._performance_mode = PERFORMANCE_MODE_NORMAL
     window._performance_auto_downgraded = False
     window._performance_mode_combo = _FakeCombo()
@@ -649,7 +597,6 @@ def test_nonfatal_map_issue_keeps_webengine_backend():
 
     window._on_map_issue_detected("ReferenceError")
 
-    assert window._map_backend == MAP_BACKEND_WEBENGINE
     assert window._map_issue_history == ["ReferenceError"]
     assert "Kartenhinweis" in window._statusbar.messages[-1]
 
@@ -743,6 +690,8 @@ def test_repeated_map_issues_enable_diagnostic_safe_mode():
     window._statusbar = _FakeStatusBar()
     window._map_issue_history = []
     window._map_safe_mode_active = False
+    window._player = _FakePlayerForMapThrottle()
+    window._session = None
 
     window._on_map_issue_detected("ReferenceError")
     window._on_map_issue_detected("TypeError")
@@ -753,10 +702,9 @@ def test_repeated_map_issues_enable_diagnostic_safe_mode():
     assert "Safe-Mode" in window._statusbar.messages[-1]
 
 
-def test_render_payload_stall_uses_safe_mode_instead_of_native_fallback():
+def test_render_payload_stall_triggers_safe_mode_with_recovery_reload():
     window = MainWindow.__new__(MainWindow)
     window._map_widget = _FakeMapWidget()
-    window._map_backend = MAP_BACKEND_WEBENGINE
     window._performance_mode = PERFORMANCE_MODE_NORMAL
     window._performance_auto_downgraded = False
     window._performance_mode_combo = _FakeCombo()
@@ -767,12 +715,15 @@ def test_render_payload_stall_uses_safe_mode_instead_of_native_fallback():
     window._statusbar = _FakeStatusBar()
     window._map_issue_history = ["minor 1", "minor 2"]
     window._map_safe_mode_active = False
+    window._player = _FakePlayerForMapThrottle()
+    window._session = SessionData(messages=window._player._messages)
 
     window._on_map_issue_detected("Karten-Renderpayload laeuft seit mehr als 8s")
 
-    assert window._map_backend == MAP_BACKEND_WEBENGINE
+    assert window._map_safe_mode_active is True
     assert window._performance_mode == PERFORMANCE_MODE_DIAGNOSTIC
     assert window._map_widget.modes[-1] == PERFORMANCE_MODE_DIAGNOSTIC
+    assert window._map_widget.reloads == 1
 
 
 def test_reload_map_resets_safe_mode_and_rerenders_session():
@@ -993,35 +944,6 @@ def test_set_overview_collapsed_hides_content_and_persists_setting():
     assert window._settings.values["ui/header_collapsed"] is True
 
 
-def test_render_process_issue_triggers_native_fallback(monkeypatch):
-    window = MainWindow.__new__(MainWindow)
-    old_map = _FakeMapWidget()
-    new_map = _FakeMapWidget()
-    window._map_widget = old_map
-    window._map_backend = MAP_BACKEND_WEBENGINE
-    window._map_backend_combo = _FakeCombo()
-    window._map_backend_combo.addItem("Leaflet", MAP_BACKEND_WEBENGINE)
-    window._map_backend_combo.addItem("Native", MAP_BACKEND_NATIVE)
-    window._map_backend_combo.setCurrentIndex(0)
-    window._map_area_layout = _FakeMapAreaLayout()
-    window._settings = _FakeSettings()
-    window._statusbar = _FakeStatusBar()
-    window._session = SessionData(messages=[_message(0)])
-    window._player = _FakePlayerForMapThrottle()
-    window._performance_mode = PERFORMANCE_MODE_NORMAL
-    window._memory_watch_label = _FakeLabel()
-    window._map_safe_mode_active = False
-    window._map_issue_history = []
-    monkeypatch.setattr(main_window_module, "create_map_widget", lambda parent=None, backend=None: new_map)
-
-    window._on_map_issue_detected("WebEngine Render-Prozess beendet (Status=NormalTerminationStatus, Code=0)")
-
-    assert window._map_backend == MAP_BACKEND_NATIVE
-    assert "ui/map_backend" not in window._settings.values
-    assert window._map_area_layout.removed == [old_map]
-    assert old_map.disposed is True
-
-
 def test_build_diagnostics_report_includes_map_backend_and_opengl_env(monkeypatch):
 
     monkeypatch.setenv("QT_OPENGL", "software")
@@ -1031,11 +953,10 @@ def test_build_diagnostics_report_includes_map_backend_and_opengl_env(monkeypatc
     window._performance_mode = PERFORMANCE_MODE_NORMAL
     window._performance_auto_downgraded = False
     window._map_safe_mode_active = False
-    window._map_backend = MAP_BACKEND_NATIVE
     window._map_telemetry_history = []
     window._map_issue_history = []
 
     report = window._build_diagnostics_report()
 
-    assert report["application"]["map_backend"] == MAP_BACKEND_NATIVE
+    assert report["application"]["map_backend"] == "webengine"
     assert report["runtime"]["qt_opengl"] == "software"

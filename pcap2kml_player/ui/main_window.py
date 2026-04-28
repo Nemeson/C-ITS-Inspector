@@ -54,15 +54,11 @@ from ..app_memory import AppMemory
 from ..data_model import MessageType, SessionData, V2xMessage
 from ..kml_exporter import export_kml
 from ..map_backend import (
-    MAP_BACKEND_NATIVE,
-    MAP_BACKEND_WEBENGINE,
-    MAP_BACKENDS,
     MAP_PERFORMANCE_DIAGNOSTIC,
     MAP_PERFORMANCE_NORMAL,
     MAP_PERFORMANCE_SAVER,
-    create_map_widget,
-    selected_map_backend_name,
 )
+from ..map_widget import MapWidget
 from ..parsing_worker import ParsingWorker
 from ..player_controller import SPEED_OPTIONS, PlayerController
 from ..prioritization_exporter import export_prioritization_issues
@@ -203,9 +199,6 @@ class MainWindow(QMainWindow):
             self._performance_mode = PERFORMANCE_MODE_NORMAL
         self._performance_auto_downgraded = False
         self._last_memory_warning_level = ""
-        self._map_backend = str(self._settings.value("ui/map_backend", selected_map_backend_name()))
-        if self._map_backend not in MAP_BACKENDS:
-            self._map_backend = MAP_BACKEND_WEBENGINE
         self._is_compact_layout = False
         self._overview_collapsed = self._settings.value(
             "ui/header_collapsed",
@@ -263,7 +256,7 @@ class MainWindow(QMainWindow):
         self._setup_filter_row(main_layout)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._map_widget = create_map_widget(backend=self._map_backend)
+        self._map_widget = MapWidget()
         self._splitter.addWidget(self._setup_map_area())
         self._splitter.addWidget(self._setup_message_list())
         self._splitter.setStretchFactor(0, 7)
@@ -430,19 +423,6 @@ class MainWindow(QMainWindow):
                 self._layout_mode_combo.setCurrentIndex(index)
                 break
         toolbar.addWidget(self._layout_mode_combo)
-
-        toolbar.addSeparator()
-        toolbar.addWidget(QLabel("Karte:"))
-        self._map_backend_combo = QComboBox()
-        self._map_backend_combo.addItem("Leaflet", MAP_BACKEND_WEBENGINE)
-        self._map_backend_combo.addItem("Native", MAP_BACKEND_NATIVE)
-        self._map_backend_combo.setToolTip("Leaflet/WebEngine mit Basiskarten oder native Qt-Fallbackkarte waehlen")
-        self._map_backend_combo.setFixedWidth(110)
-        for index in range(self._map_backend_combo.count()):
-            if self._map_backend_combo.itemData(index) == self._map_backend:
-                self._map_backend_combo.setCurrentIndex(index)
-                break
-        toolbar.addWidget(self._map_backend_combo)
 
         toolbar.addSeparator()
         toolbar.addWidget(QLabel("Leistung:"))
@@ -931,7 +911,6 @@ class MainWindow(QMainWindow):
         self._btn_update_schemas.clicked.connect(self._on_update_schemas)
         self._btn_dashboard.clicked.connect(self._on_show_dashboard)
         self._layout_mode_combo.currentIndexChanged.connect(self._on_layout_mode_changed)
-        self._map_backend_combo.currentIndexChanged.connect(self._on_map_backend_changed)
         self._performance_mode_combo.currentIndexChanged.connect(self._on_performance_mode_changed)
         self._connect_map_widget_signals()
         self._btn_export_eta_dashboard.clicked.connect(self._on_export_eta_dashboard)
@@ -967,55 +946,6 @@ class MainWindow(QMainWindow):
         self._layout_preference = str(self._layout_mode_combo.currentData() or LAYOUT_MODE_AUTO)
         self._settings.setValue("ui/layout_mode", self._layout_preference)
         self._apply_responsive_layout(force=True)
-
-    def _on_map_backend_changed(self, *_args) -> None:
-        """Persist and switch the visible map implementation."""
-        backend = str(self._map_backend_combo.currentData() or MAP_BACKEND_WEBENGINE)
-        if backend not in MAP_BACKENDS or backend == self._map_backend:
-            return
-        self._replace_map_widget(backend, persist=True)
-
-    def _replace_map_widget(self, backend: str, *, persist: bool = False) -> None:
-        """Swap Leaflet/WebEngine and native map backends without losing the session."""
-        logger.info("Replacing map widget: backend=%s persist=%s", backend, persist)
-        old_widget = self._map_widget
-        self._map_backend = backend
-        if persist:
-            self._settings.setValue("ui/map_backend", backend)
-        self._map_widget = create_map_widget(backend=backend)
-        self._connect_map_widget_signals()
-        self._map_area_layout.removeWidget(old_widget)
-        if hasattr(old_widget, "dispose"):
-            old_widget.dispose()
-        old_widget.setParent(None)
-        # Invalidate any pending QTimer/WebEngine callbacks on the old widget
-        # before deleteLater().  QtWebEngine can still finish async JS after the
-        # Python object is alive but the wrapped C++ view has been destroyed.
-        if hasattr(old_widget, "_bootstrap_generation"):
-            old_widget._bootstrap_generation = -1
-        if hasattr(old_widget, "_render_payload_stall_generation"):
-            old_widget._render_payload_stall_generation = -1
-        if hasattr(old_widget, "_bootstrap_probe_succeeded"):
-            old_widget._bootstrap_probe_succeeded = True
-        if hasattr(old_widget, "_render_payload_in_flight"):
-            old_widget._render_payload_in_flight = False
-        if hasattr(old_widget, "_queued_render_payload_script"):
-            old_widget._queued_render_payload_script = None
-        old_widget.deleteLater()
-        self._map_area_layout.insertWidget(0, self._map_widget, stretch=1)
-        if hasattr(self, "_map_backend_combo"):
-            combo_index = self._map_backend_combo.findData(backend)
-            if combo_index >= 0:
-                self._map_backend_combo.blockSignals(True)
-                self._map_backend_combo.setCurrentIndex(combo_index)
-                self._map_backend_combo.blockSignals(False)
-        self._map_safe_mode_active = False
-        self._map_issue_history.clear()
-        self._apply_performance_mode()
-        if self._session:
-            self._map_widget.load_messages(self._player._messages)
-        label = "Leaflet" if backend == MAP_BACKEND_WEBENGINE else "Native"
-        self._statusbar.showMessage(f"Kartenbackend gewechselt: {label}", 5000)
 
     def _on_performance_mode_changed(self, *_args) -> None:
         """Persist and apply the selected map performance mode."""
@@ -1135,22 +1065,12 @@ class MainWindow(QMainWindow):
             )
 
     def _on_map_issue_detected(self, message: str) -> None:
-        """Switch to safe map mode after repeated WebEngine/JavaScript problems."""
+        """Handle WebEngine/JavaScript problems with auto-recovery reload."""
         logger.info("Map issue detected: %s", message)
         issues = self.__dict__.setdefault("_map_issue_history", [])
         issues.append(message)
         del issues[:-20]
-        if self._should_fallback_to_native_map(message):
-            logger.warning(
-                "Fatal map issue — switching to native fallback (persist=False): %s",
-                message,
-            )
-            self._replace_map_widget(MAP_BACKEND_NATIVE, persist=False)
-            self._statusbar.showMessage(
-                f"Karte auf Native-Fallback gewechselt: {message}",
-                8000,
-            )
-            return
+
         if self.__dict__.get("_map_safe_mode_active", False):
             return
         if len(issues) < MAP_SAFE_MODE_ISSUE_THRESHOLD:
@@ -1164,19 +1084,35 @@ class MainWindow(QMainWindow):
             8000,
         )
 
-    def _should_fallback_to_native_map(self, message: str) -> bool:
-        """Return whether a WebEngine issue should trigger the native map fallback."""
-        if self.__dict__.get("_map_backend", MAP_BACKEND_WEBENGINE) != MAP_BACKEND_WEBENGINE:
-            return False
-        fatal_markers = (
-            "Karten-WebView",
-            "Leaflet",
-            "WebEngine",
-            "Bootstrap",
-            "Initialisierungstimeout",
-            "Render-Prozess",
+        # Auto-recovery: reload map page, max 3 attempts within 60s
+        crash_counter = self.__dict__.setdefault("_map_crash_counter", 0)
+        now = time.monotonic()
+        first_crash = self.__dict__.setdefault("_map_first_crash_at", now)
+        if now - first_crash > 60.0:
+            crash_counter = 0
+            self._map_first_crash_at = now
+        crash_counter += 1
+        self._map_crash_counter = crash_counter
+
+        if crash_counter <= 3:
+            logger.info("Auto-recovery reload attempt %d/3", crash_counter)
+            if hasattr(self._map_widget, "reload_map_page"):
+                self._map_widget.reload_map_page()
+            self._map_issue_history.clear()
+            self._apply_performance_mode()
+            if self._session:
+                self._map_widget.load_messages(self._player._messages)
+            self._statusbar.showMessage("Karte wurde neu geladen (Safe-Mode)", 4000)
+            return
+
+        logger.error("Map recovery failed after %d attempts", crash_counter)
+        QMessageBox.warning(
+            self,
+            "Kartenfehler",
+            "Die Karte konnte nach mehreren Versuchen nicht wiederhergestellt werden.\n\n"
+            "Bitte starte die Anwendung neu oder exportiere die Diagnose "
+            "(Menü → Diagnose exportieren).",
         )
-        return any(marker in message for marker in fatal_markers)
 
     def _on_reload_map(self) -> None:
         """Reload the WebEngine map and re-render the current session."""
@@ -1261,7 +1197,7 @@ class MainWindow(QMainWindow):
                     False,
                 ),
                 "map_safe_mode_active": self.__dict__.get("_map_safe_mode_active", False),
-                "map_backend": self.__dict__.get("_map_backend", selected_map_backend_name()),
+                "map_backend": "webengine",
                 "memory_mb": memory_mb,
             },
             "runtime": {

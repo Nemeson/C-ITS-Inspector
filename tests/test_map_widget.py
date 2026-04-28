@@ -629,20 +629,27 @@ def test_bootstrap_timeout_ignores_stale_generation():
     assert issues == []
 
 
-def test_load_finished_false_emits_map_load_issue():
+def test_load_finished_false_emits_map_load_issue_after_retries():
     widget = MapWidget.__new__(MapWidget)
     widget._pending_scripts = []
     widget._render_payload_in_flight = True
     widget._queued_render_payload_script = "applyRenderPayload({})"
+    widget._page_load_failures = 0
     issues: list[str] = []
     widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
 
-    widget._on_load_finished(False)
+    # First 3 failures retry without emitting
+    for _ in range(3):
+        widget._on_load_finished(False)
 
     assert widget._page_ready is False
-    assert widget._render_payload_in_flight is False
-    assert widget._queued_render_payload_script is None
-    assert issues == ["Karten-WebView konnte nicht geladen werden"]
+    assert len(issues) == 0  # no issue emitted during retries
+
+    # 4th failure triggers the issue
+    widget._on_load_finished(False)
+
+    assert len(issues) == 1
+    assert "3 Versuche fehlgeschlagen" in issues[0]
 
 
 def test_run_js_coalesces_render_payloads_while_previous_payload_is_active():
@@ -1336,11 +1343,19 @@ def test_render_process_terminated_emits_map_issue():
     widget = MapWidget.__new__(MapWidget)
     widget._bootstrap_probe_succeeded = True
     widget._page_ready = True
+    widget._render_payload_in_flight = True
+    widget._queued_render_payload_script = "applyRenderPayload({})"
+    widget._render_payload_started_at = 123.0
     issues: list[str] = []
     widget.map_issue_detected = type("Signal", (), {"emit": lambda self, msg: issues.append(msg)})()
+    # setHtml and _schedule_bootstrap_timeout are not available via __new__
+    widget.setHtml = lambda *a, **kw: None
+    widget._schedule_bootstrap_timeout = lambda: None
 
     widget._on_render_process_terminated("NormalTerminationStatus", 0)
 
     assert widget._bootstrap_probe_succeeded is False
     assert widget._page_ready is False
+    assert widget._render_payload_in_flight is False
+    assert widget._queued_render_payload_script is None
     assert issues and "Render-Prozess" in issues[0]
