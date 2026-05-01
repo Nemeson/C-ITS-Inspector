@@ -15,7 +15,7 @@ from math import cos, hypot, radians
 from pathlib import Path
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QResizeEvent, QShowEvent
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
@@ -1773,6 +1773,217 @@ class DiagnosticWebEnginePage(QWebEnginePage):
             self.java_script_issue.emit(f"{level_name}: {message} ({source_id}:{line_number})")
 
 
+def _compute_render_payload(
+    messages: list[V2xMessage],
+    *,
+    max_index: int | None,
+    window_start_timestamp: float | None = None,
+    fit_view: bool,
+    short_trails: bool,
+    clear_first: bool,
+    performance_mode: str,
+    station_color_map: dict[str, str],
+) -> dict[str, object]:
+    station_coords: dict[str, list] = {}
+    markers_by_id: dict[str, dict[str, object]] = {}
+    budget = MAP_RENDER_BUDGETS.get(performance_mode, MAP_RENDER_BUDGETS[MAP_PERFORMANCE_NORMAL])
+    end_index = len(messages) if max_index is None else min(max_index + 1, len(messages))
+    display_anchors = _display_anchor_points(messages, max_index=max_index)
+
+    for index, msg in enumerate(messages):
+        if index >= end_index:
+            break
+        msg_timestamp = msg.timestamp.timestamp()
+        if not _has_display_position(msg) or not _is_near_display_anchors(msg, display_anchors):
+            continue
+        if (
+            window_start_timestamp is not None
+            and msg_timestamp < window_start_timestamp
+            and msg.msg_type not in INFRASTRUCTURE_MESSAGE_COLORS
+        ):
+            continue
+        color = INFRASTRUCTURE_MESSAGE_COLORS.get(msg.msg_type, station_color_map.get(msg.station_id, "#3388ff"))
+        marker_lat, marker_lon = _marker_position_for_message(msg)
+
+        if msg.msg_type not in NON_STATION_MARKER_TYPES:
+            marker_id_raw = _marker_id_for_message(msg)
+            markers_by_id[marker_id_raw] = {
+                "id": marker_id_raw,
+                "stationId": msg.station_id,
+                "lat": marker_lat,
+                "lon": marker_lon,
+                "popup": (
+                    f"<b>{msg.msg_type.value}</b><br>"
+                    f"Station: {msg.station_id}<br>"
+                    f"Time: {msg.timestamp.strftime('%H:%M:%S.%f')[:-3]}<br>"
+                    f"Pos: {msg.latitude:.6f}, {msg.longitude:.6f}"
+                ),
+                "color": color,
+                "layerName": "markers",
+            }
+            station_coords.setdefault(msg.station_id, []).append([msg.latitude, msg.longitude])
+
+    infrastructure_payload: list[dict[str, object]] = []
+    for overlay in _infrastructure_overlays_for_messages(messages, max_index=max_index):
+        if performance_mode != MAP_PERFORMANCE_NORMAL and overlay["kind"] == "label":
+            continue
+        if performance_mode == MAP_PERFORMANCE_DIAGNOSTIC and overlay.get("layer") not in {
+            "map_inbound",
+            "map_outbound",
+            "map_connections",
+            "map_stoplines",
+            "map_requests",
+            "spat",
+        }:
+            continue
+        overlay_id = str(overlay["id"])
+        layer_name = str(overlay["layer"])
+        overlay_color = str(overlay["color"])
+        if overlay["kind"] == "circle":
+            infrastructure_payload.append(
+                {
+                    "kind": "circle",
+                    "id": overlay_id,
+                    "lat": overlay["lat"],
+                    "lon": overlay["lon"],
+                    "radius": overlay["radius"],
+                    "color": overlay_color,
+                    "popup": str(overlay.get("popup", "")),
+                    "layerName": layer_name,
+                }
+            )
+        elif overlay["kind"] == "polyline":
+            infrastructure_payload.append(
+                {
+                    "kind": "polyline",
+                    "id": overlay_id,
+                    "coords": overlay["coords"],
+                    "color": overlay_color,
+                    "popup": str(overlay.get("popup", "")),
+                    "layerName": layer_name,
+                    "weight": overlay.get("weight", 3),
+                    "opacity": overlay.get("opacity", 0.85),
+                    "dashArray": str(overlay.get("dashArray", "8 6")),
+                    "tooltip": str(overlay.get("tooltip", "")),
+                }
+            )
+        elif overlay["kind"] == "label":
+            infrastructure_payload.append(
+                {
+                    "kind": "label",
+                    "id": overlay_id,
+                    "lat": overlay["lat"],
+                    "lon": overlay["lon"],
+                    "text": str(overlay["text"]),
+                    "color": overlay_color,
+                    "layerName": layer_name,
+                }
+            )
+
+    trajectories_payload: list[dict[str, object]] = []
+    render_trajectories = performance_mode == MAP_PERFORMANCE_NORMAL
+    if performance_mode == MAP_PERFORMANCE_SAVER and len(station_coords) <= 25:
+        render_trajectories = True
+    if performance_mode == MAP_PERFORMANCE_DIAGNOSTIC and len(station_coords) <= 10:
+        render_trajectories = True
+    for station_id, coords in station_coords.items():
+        if not render_trajectories:
+            continue
+        if short_trails:
+            coords = coords[-PLAYBACK_TRAIL_POINTS:]
+        trajectories_payload.append(
+            {
+                "stationId": station_id,
+                "coords": coords,
+                "color": station_color_map.get(station_id, "#3388ff"),
+            }
+        )
+
+    marker_payload = list(markers_by_id.values())
+    if len(marker_payload) > int(budget["markers"]):
+        marker_payload = marker_payload[-int(budget["markers"]) :]
+    if len(infrastructure_payload) > int(budget["infrastructure"]):
+        infrastructure_payload = infrastructure_payload[: int(budget["infrastructure"])]
+    if len(trajectories_payload) > int(budget["trajectories"]):
+        trajectories_payload = trajectories_payload[-int(budget["trajectories"]) :]
+
+    total_points = sum(len(t["coords"]) for t in trajectories_payload)
+    max_points = int(budget["trajectory_points"])
+    if total_points > max_points > 0:
+        remaining = max_points
+        for i, t in enumerate(trajectories_payload):
+            coords = t["coords"]
+            keep = max(1, remaining // max(len(trajectories_payload) - i, 1))
+            if len(coords) > keep:
+                t["coords"] = coords[-keep:]
+            remaining -= len(t["coords"])
+
+    return {
+        "clear": clear_first,
+        "fitView": fit_view,
+        "bounds": _payload_bounds(marker_payload, infrastructure_payload),
+        "performanceMode": performance_mode,
+        "stationColors": station_color_map,
+        "markers": marker_payload,
+        "infrastructure": infrastructure_payload,
+        "trajectories": trajectories_payload,
+    }
+
+
+class RenderPayloadWorker(QThread):
+    """Compute map render payloads in a background thread."""
+
+    payload_ready = pyqtSignal(str, float)
+
+    def __init__(
+        self,
+        messages: list[V2xMessage],
+        max_index: int | None,
+        window_start_timestamp: float | None,
+        fit_view: bool,
+        short_trails: bool,
+        clear_first: bool,
+        performance_mode: str,
+        station_color_map: dict[str, str],
+        *,
+        parent: QObject | None = None,
+    ):
+        super().__init__(parent)
+        self._messages = messages
+        self._max_index = max_index
+        self._window_start_timestamp = window_start_timestamp
+        self._fit_view = fit_view
+        self._short_trails = short_trails
+        self._clear_first = clear_first
+        self._performance_mode = performance_mode
+        self._station_color_map = dict(station_color_map)
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        if self._cancelled:
+            return
+        try:
+            payload = _compute_render_payload(
+                self._messages,
+                max_index=self._max_index,
+                window_start_timestamp=self._window_start_timestamp,
+                fit_view=self._fit_view,
+                short_trails=self._short_trails,
+                clear_first=self._clear_first,
+                performance_mode=self._performance_mode,
+                station_color_map=self._station_color_map,
+            )
+            if self._cancelled:
+                return
+            payload_json = json.dumps(payload)
+            self.payload_ready.emit(payload_json, time.time())
+        except Exception:
+            logger.exception("RenderPayloadWorker crashed")
+
+
 class MapWidget(QWebEngineView):
     """Interactive Leaflet map displaying V2X entity positions and trajectories."""
 
@@ -1820,6 +2031,7 @@ class MapWidget(QWebEngineView):
         self._user_interacting = False
         self._render_stall_count = 0
         self._first_stall_at: float | None = None
+        self._render_worker: RenderPayloadWorker | None = None
 
         self._bridge.message_clicked.connect(self._on_marker_clicked)
         self._bridge.map_interaction_started.connect(self._on_user_interaction_start)
@@ -1857,6 +2069,12 @@ class MapWidget(QWebEngineView):
             stall_timer.stop()
             stall_timer.deleteLater()
         self.__dict__["_stall_timer"] = None
+
+        worker = self.__dict__.get("_render_worker")
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+            worker.wait(500)
+        self.__dict__["_render_worker"] = None
 
     def _get_station_color(self, station_id: str) -> str:
         """Assign a color to a station ID, creating a new one if needed."""
@@ -1944,185 +2162,30 @@ class MapWidget(QWebEngineView):
         short_trails: bool,
         clear_first: bool,
     ) -> None:
-        """Internal renderer for a full load or a playback time slice."""
-        # Assign colors and set them in JS
-        # Group by station for trajectories
-        station_coords: dict[str, list] = {}
-        markers_by_id: dict[str, dict[str, object]] = {}
-        performance_mode = self.__dict__.get("_performance_mode", MAP_PERFORMANCE_NORMAL)
-        budget = MAP_RENDER_BUDGETS.get(
-            performance_mode,
-            MAP_RENDER_BUDGETS[MAP_PERFORMANCE_NORMAL],
+        if self.__dict__.get("_disposed", False) or _qt_object_deleted(self):
+            return
+
+        render_worker = self.__dict__.get("_render_worker")
+        if render_worker is not None and render_worker.isRunning():
+            render_worker.cancel()
+            render_worker.wait(500)
+
+        self._render_worker = RenderPayloadWorker(
+            messages,
+            max_index=max_index,
+            window_start_timestamp=window_start_timestamp,
+            fit_view=fit_view,
+            short_trails=short_trails,
+            clear_first=clear_first,
+            performance_mode=self.__dict__.get("_performance_mode", MAP_PERFORMANCE_NORMAL),
+            station_color_map=self._station_color_map,
         )
-        end_index = len(messages) if max_index is None else min(max_index + 1, len(messages))
-        display_anchors = _display_anchor_points(messages, max_index=max_index)
-        visible_message_count = 0
+        self._render_worker.payload_ready.connect(self._on_worker_payload_ready)
+        self._render_worker.start()
 
-        for index, msg in enumerate(messages):
-            if index >= end_index:
-                break
-            msg_timestamp = msg.timestamp.timestamp()
-            if not _has_display_position(msg) or not _is_near_display_anchors(msg, display_anchors):
-                continue
-            if (
-                window_start_timestamp is not None
-                and msg_timestamp < window_start_timestamp
-                and msg.msg_type not in INFRASTRUCTURE_MESSAGE_COLORS
-            ):
-                continue
-            visible_message_count += 1
-            color = self._color_for_message(msg)
-            marker_lat, marker_lon = _marker_position_for_message(msg)
-            popup = (
-                f"<b>{msg.msg_type.value}</b><br>"
-                f"Station: {msg.station_id}<br>"
-                f"Time: {msg.timestamp.strftime('%H:%M:%S.%f')[:-3]}<br>"
-                f"Pos: {msg.latitude:.6f}, {msg.longitude:.6f}"
-            )
-
-            if msg.msg_type not in NON_STATION_MARKER_TYPES:
-                # Place/update the current dynamic marker at the latest visible position.
-                marker_id_raw = _marker_id_for_message(msg)
-                markers_by_id[marker_id_raw] = {
-                    "id": marker_id_raw,
-                    "stationId": msg.station_id,
-                    "lat": marker_lat,
-                    "lon": marker_lon,
-                    "popup": popup,
-                    "color": color,
-                    "layerName": "markers",
-                }
-
-            # Collect trajectory coordinates
-            if msg.msg_type not in NON_STATION_MARKER_TYPES:
-                station_coords.setdefault(msg.station_id, []).append([msg.latitude, msg.longitude])
-
-        infrastructure_payload: list[dict[str, object]] = []
-        for overlay in _infrastructure_overlays_for_messages(messages, max_index=max_index):
-            if performance_mode != MAP_PERFORMANCE_NORMAL and overlay["kind"] == "label":
-                continue
-            if performance_mode == MAP_PERFORMANCE_DIAGNOSTIC and overlay.get("layer") not in {
-                "map_inbound",
-                "map_outbound",
-                "map_connections",
-                "map_stoplines",
-                "map_requests",
-                "spat",
-            }:
-                continue
-            overlay_id = str(overlay["id"])
-            layer_name = str(overlay["layer"])
-            overlay_color = str(overlay["color"])
-            if overlay["kind"] == "circle":
-                infrastructure_payload.append(
-                    {
-                        "kind": "circle",
-                        "id": overlay_id,
-                        "lat": overlay["lat"],
-                        "lon": overlay["lon"],
-                        "radius": overlay["radius"],
-                        "color": overlay_color,
-                        "popup": str(overlay.get("popup", "")),
-                        "layerName": layer_name,
-                    }
-                )
-            elif overlay["kind"] == "polyline":
-                infrastructure_payload.append(
-                    {
-                        "kind": "polyline",
-                        "id": overlay_id,
-                        "coords": overlay["coords"],
-                        "color": overlay_color,
-                        "popup": str(overlay.get("popup", "")),
-                        "layerName": layer_name,
-                        "weight": overlay.get("weight", 3),
-                        "opacity": overlay.get("opacity", 0.85),
-                        "dashArray": str(overlay.get("dashArray", "8 6")),
-                        "tooltip": str(overlay.get("tooltip", "")),
-                    }
-                )
-            elif overlay["kind"] == "label":
-                infrastructure_payload.append(
-                    {
-                        "kind": "label",
-                        "id": overlay_id,
-                        "lat": overlay["lat"],
-                        "lon": overlay["lon"],
-                        "text": str(overlay["text"]),
-                        "color": overlay_color,
-                        "layerName": layer_name,
-                    }
-                )
-
-        # Draw trajectories
-        trajectories_payload: list[dict[str, object]] = []
-        render_trajectories = performance_mode == MAP_PERFORMANCE_NORMAL
-        if performance_mode == MAP_PERFORMANCE_SAVER and len(station_coords) <= 25:
-            render_trajectories = True
-        if performance_mode == MAP_PERFORMANCE_DIAGNOSTIC and len(station_coords) <= 10:
-            render_trajectories = True
-        for station_id, coords in station_coords.items():
-            if not render_trajectories:
-                continue
-            if short_trails:
-                coords = coords[-PLAYBACK_TRAIL_POINTS:]
-            trajectories_payload.append(
-                {
-                    "stationId": station_id,
-                    "coords": coords,
-                    "color": self._get_station_color(station_id),
-                }
-            )
-
-        marker_payload = list(markers_by_id.values())
-        dropped_markers = max(0, len(marker_payload) - int(budget["markers"]))
-        if dropped_markers:
-            marker_payload = marker_payload[-int(budget["markers"]) :]
-
-        dropped_infrastructure = max(
-            0,
-            len(infrastructure_payload) - int(budget["infrastructure"]),
-        )
-        if dropped_infrastructure:
-            infrastructure_payload = infrastructure_payload[: int(budget["infrastructure"])]
-
-        dropped_trajectories = max(0, len(trajectories_payload) - int(budget["trajectories"]))
-        if dropped_trajectories:
-            trajectories_payload = trajectories_payload[-int(budget["trajectories"]) :]
-
-        dropped_trajectory_points = self._trim_trajectory_payload(
-            trajectories_payload,
-            int(budget["trajectory_points"]),
-        )
-
-        payload = {
-            "clear": clear_first,
-            "fitView": fit_view,
-            "bounds": _payload_bounds(marker_payload, infrastructure_payload),
-            "performanceMode": performance_mode,
-            "stationColors": self._station_color_map,
-            "markers": marker_payload,
-            "infrastructure": infrastructure_payload,
-            "trajectories": trajectories_payload,
-        }
-        payload_json = json.dumps(payload)
-        self._record_render_telemetry(
-            MapRenderTelemetry(
-                timestamp=time.time(),
-                performance_mode=performance_mode,
-                source_message_count=end_index,
-                visible_message_count=visible_message_count,
-                marker_count=len(marker_payload),
-                infrastructure_count=len(infrastructure_payload),
-                trajectory_count=len(trajectories_payload),
-                trajectory_point_count=sum(len(trajectory["coords"]) for trajectory in trajectories_payload),
-                payload_bytes=len(payload_json.encode("utf-8")),
-                budget_dropped_markers=dropped_markers,
-                budget_dropped_infrastructure=dropped_infrastructure,
-                budget_dropped_trajectories=dropped_trajectories,
-                budget_dropped_trajectory_points=dropped_trajectory_points,
-            )
-        )
+    def _on_worker_payload_ready(self, payload_json: str, _compute_time: float) -> None:
+        if self.__dict__.get("_disposed", False) or _qt_object_deleted(self):
+            return
         self._run_js(f"applyRenderPayload({payload_json})")
 
     def _trim_trajectory_payload(
@@ -2357,7 +2420,7 @@ class MapWidget(QWebEngineView):
             self._pending_scripts.append(script)
             return
         if script.startswith("applyRenderPayload("):
-            if self._render_payload_in_flight:
+            if self.__dict__.get("_render_payload_in_flight", False):
                 self._queued_render_payload_script = script
                 self._last_payload_was_replaced = True
                 self._mark_latest_telemetry_replaced()
