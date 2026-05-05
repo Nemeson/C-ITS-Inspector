@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from math import cos, radians
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .data_model import CaptureRole, MessageSource, MessageType, SessionData, V2xMessage
+from .map_backend import METERS_PER_DEGREE_LATITUDE
 
 
 _INTERSECTION_TAGS = {"intersectiongeometry", "intersection"}
@@ -145,6 +147,39 @@ def _normalize_geo_point(point: object) -> dict[str, float] | None:
     return {"lat": lat_num, "lon": lon_num}
 
 
+def _coerce_lat_lon(value: object) -> tuple[float, float] | None:
+    """Normalize mixed coordinate shapes to decimal degrees."""
+    if not isinstance(value, dict):
+        return None
+    lat = value.get("lat", value.get("latitude"))
+    lon = value.get("lon", value.get("longitude", value.get("long")))
+    if lat is None or lon is None:
+        return None
+    try:
+        lat_num = float(lat)
+        lon_num = float(lon)
+    except (TypeError, ValueError):
+        return None
+    if abs(lat_num) > 90 or abs(lon_num) > 180:
+        lat_num /= 1e7
+        lon_num /= 1e7
+    return (lat_num, lon_num)
+
+
+def _delta_to_geo(
+    lat: float,
+    lon: float,
+    delta_x_cm: int,
+    delta_y_cm: int,
+) -> tuple[float, float]:
+    """Approximate ISO 19091 local XY deltas as absolute WGS84 points."""
+    meters_east = delta_x_cm / 100.0
+    meters_north = delta_y_cm / 100.0
+    lat += meters_north / METERS_PER_DEGREE_LATITUDE
+    lon += meters_east / max(1e-6, METERS_PER_DEGREE_LATITUDE * cos(radians(lat)))
+    return (lat, lon)
+
+
 def _normalize_map_intersection(intersection: dict) -> dict:
     normalized = dict(intersection)
     point = _normalize_geo_point(normalized.get("refPoint"))
@@ -153,6 +188,8 @@ def _normalize_map_intersection(intersection: dict) -> dict:
     lane_set = normalized.get("laneSet")
     if isinstance(lane_set, list):
         normalized_lanes = []
+        current_lat = point["lat"] if point is not None else 0.0
+        current_lon = point["lon"] if point is not None else 0.0
         for lane in lane_set:
             if not isinstance(lane, dict):
                 continue
@@ -163,6 +200,37 @@ def _normalize_map_intersection(intersection: dict) -> dict:
             if lane_id is not None:
                 normalized_lane["laneID"] = lane_id
                 normalized_lane["laneId"] = lane_id
+
+            # Resolve delta nodes to absolute lat/lon
+            node_list = normalized_lane.get("nodeList", normalized_lane.get("node-list"))
+            if isinstance(node_list, dict):
+                nodes = node_list.get("nodes", node_list.get("nodeSetXY"))
+            else:
+                nodes = node_list
+            if isinstance(nodes, list):
+                abs_nodes: list[dict[str, float]] = []
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    abs_point = _coerce_lat_lon(node)
+                    if abs_point is not None:
+                        current_lat, current_lon = abs_point
+                        abs_nodes.append({"lat": current_lat, "lon": current_lon})
+                        continue
+                    delta = node.get("delta")
+                    if isinstance(delta, tuple) and len(delta) == 2 and isinstance(delta[1], dict):
+                        delta = delta[1]
+                    if not isinstance(delta, dict):
+                        continue
+                    try:
+                        delta_x = int(delta.get("x", 0))
+                        delta_y = int(delta.get("y", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    current_lat, current_lon = _delta_to_geo(current_lat, current_lon, delta_x, delta_y)
+                    abs_nodes.append({"lat": current_lat, "lon": current_lon})
+                if abs_nodes:
+                    normalized_lane["nodeList"] = {"nodes": abs_nodes}
             normalized_lanes.append(normalized_lane)
         normalized["laneSet"] = normalized_lanes
     return normalized

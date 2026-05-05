@@ -129,7 +129,7 @@ def generate_ui_docs(fixture_path: Path, output_dir: Path) -> int:
     print("[INFO] Starting MainWindow...")
     window = MainWindow()
     window.show()
-    window._on_load_finished(session, [str(fixture_path)], [])
+    window._on_import_finished(session, [str(fixture_path)], [])
     app.processEvents()
 
     screenshots: list[Path] = []

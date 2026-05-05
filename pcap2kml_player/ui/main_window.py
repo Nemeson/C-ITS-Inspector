@@ -645,9 +645,9 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(brand)
 
         # Group 1: Load
-        self._btn_load = QPushButton("PCAP laden")
-        self._btn_load.setStyleSheet(TOOLBAR_BTN_PRIMARY)
-        toolbar.addWidget(self._btn_load)
+        self._btn_import = QPushButton("Importieren")
+        self._btn_import.setStyleSheet(TOOLBAR_BTN_PRIMARY)
+        toolbar.addWidget(self._btn_import)
 
         self._btn_reload_last = QPushButton("Letzte Sitzung")
         self._btn_reload_last.setStyleSheet(TOOLBAR_BTN_STYLE)
@@ -1421,7 +1421,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         """Connect UI controls to their handlers."""
         # Toolbar
-        self._btn_load.clicked.connect(self._on_load_pcap)
+        self._btn_import.clicked.connect(self._on_import)
         self._btn_reload_last.clicked.connect(self._on_reload_last_session)
         self._btn_export_kml.clicked.connect(self._on_export_kml)
         self._btn_export_issues.clicked.connect(self._on_export_prioritization_issues)
@@ -1641,16 +1641,17 @@ class MainWindow(QMainWindow):
 
     # ── Load PCAP ──────────────────────────────────────────────────
 
-    def _on_load_pcap(self) -> None:
+    def _on_import(self) -> None:
+        """Open file dialog for importing PCAP and MAP XML files."""
         start_dir = self._memory.last_directory or str(Path.cwd())
         paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "PCAP-/MAP-Dateien oeffnen",
+            "Dateien importieren",
             start_dir,
             "PCAP und MAP XML (*.pcap *.pcapng *.cap *.xml);;PCAP-Dateien (*.pcap *.pcapng *.cap);;MAP XML (*.xml);;Alle Dateien (*)",
         )
         if paths:
-            self._load_paths(paths)
+            self._import_paths(paths)
 
     def _on_reload_last_session(self) -> None:
         paths = self._memory.existing_last_session_files()
@@ -1659,37 +1660,37 @@ class MainWindow(QMainWindow):
                 self, "Keine Sitzung vorhanden", "Es wurden keine gueltigen Dateien aus der letzten Sitzung gefunden."
             )
             return
-        self._load_paths(paths)
+        self._import_paths(paths)
 
-    def _load_paths(self, paths: list[str]) -> None:
+    def _import_paths(self, paths: list[str]) -> None:
         if self._loader_thread is not None:
             QMessageBox.information(
-                self, "Ladevorgang aktiv", "Es laeuft bereits ein Parse-Vorgang. Bitte warte oder brich ihn ab."
+                self, "Ladevorgang aktiv", "Es laeuft bereits ein Import-Vorgang. Bitte warte oder brich ihn ab."
             )
             return
         normalized = [str(Path(path).resolve()) for path in paths]
-        self._set_loading_state(True, 0, 100, "PCAP-/MAP-Dateien werden im Hintergrund geladen...")
+        self._set_loading_state(True, 0, 100, "Dateien werden im Hintergrund importiert...")
         self._loader_thread = QThread(self)
         self._loader_worker = ParsingWorker(normalized)
         self._loader_worker.moveToThread(self._loader_thread)
         self._loader_thread.started.connect(self._loader_worker.run)
-        self._loader_worker.progress.connect(self._on_load_progress)
-        self._loader_worker.finished.connect(self._on_load_finished)
-        self._loader_worker.cancelled.connect(self._on_load_cancelled)
+        self._loader_worker.progress.connect(self._on_import_progress)
+        self._loader_worker.finished.connect(self._on_import_finished)
+        self._loader_worker.cancelled.connect(self._on_import_cancelled)
         self._loader_worker.finished.connect(self._cleanup_loader)
         self._loader_worker.cancelled.connect(self._cleanup_loader)
         self._loader_thread.start()
 
-    def _on_cancel_load(self) -> None:
+    def _on_cancel_import(self) -> None:
         if self._loader_worker is not None:
             self._loader_worker.cancel()
             self._statusbar.showMessage("Abbruch angefordert...")
 
-    def _on_load_progress(self, percent: int, filename: str) -> None:
+    def _on_import_progress(self, percent: int, filename: str) -> None:
         self._progress.setValue(percent)
-        self._statusbar.showMessage(f"Lade {filename}... {percent}%")
+        self._statusbar.showMessage(f"Importiere {filename}... {percent}%")
 
-    def _on_load_finished(self, session: SessionData, paths: list[str], errors: list[str]) -> None:
+    def _on_import_finished(self, session: SessionData, paths: list[str], errors: list[str]) -> None:
         self._set_loading_state(False)
         if not session.messages:
             self._session = None
@@ -1697,12 +1698,12 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage("Keine verarbeitbaren Nachrichten gefunden")
             self._refresh_memory_banner()
             if errors:
-                QMessageBox.warning(self, "Laden fehlgeschlagen", "\n".join(errors))
+                QMessageBox.warning(self, "Import fehlgeschlagen", "\n".join(errors))
             else:
                 QMessageBox.information(
                     self,
                     "Keine Daten gefunden",
-                    "In den geladenen PCAP-Dateien wurden keine verarbeitbaren Nachrichten erkannt.",
+                    "In den importierten Dateien wurden keine verarbeitbaren Nachrichten erkannt.",
                 )
             return
         # Clear previous session state before loading new data
@@ -1733,35 +1734,35 @@ class MainWindow(QMainWindow):
         )
         self._memory.save()
         self._statusbar.showMessage(
-            f"{len(session.messages)} Nachrichten geladen - "
+            f"{len(session.messages)} Nachrichten importiert - "
             f"{len(session.station_ids)} Stationen - "
             f"Dauer: {self._player.format_time(session.duration_seconds)}"
         )
         if errors:
             QMessageBox.warning(
                 self,
-                "Teilweise geladen",
+                "Teilweise importiert",
                 "Einige Dateien konnten nicht vollstaendig verarbeitet werden:\n\n" + "\n".join(errors),
             )
 
-    def _on_load_cancelled(self) -> None:
+    def _on_import_cancelled(self) -> None:
         self._set_loading_state(False)
-        self._statusbar.showMessage("Ladevorgang abgebrochen")
+        self._statusbar.showMessage("Import abgebrochen")
 
     def _cleanup_loader(self, *args) -> None:
         if self._loader_worker is not None:
             try:
-                self._loader_worker.finished.disconnect(self._on_load_finished)
+                self._loader_worker.finished.disconnect(self._on_import_finished)
                 self._loader_worker.finished.disconnect(self._cleanup_loader)
             except (RuntimeError, TypeError):
                 pass
             try:
-                self._loader_worker.cancelled.disconnect(self._on_load_cancelled)
+                self._loader_worker.cancelled.disconnect(self._on_import_cancelled)
                 self._loader_worker.cancelled.disconnect(self._cleanup_loader)
             except (RuntimeError, TypeError):
                 pass
             try:
-                self._loader_worker.progress.disconnect(self._on_load_progress)
+                self._loader_worker.progress.disconnect(self._on_import_progress)
             except (RuntimeError, TypeError):
                 pass
             self._loader_worker.deleteLater()
@@ -2656,7 +2657,7 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(loading)
         self._progress.setRange(minimum, maximum)
         self._progress.setValue(minimum)
-        self._btn_load.setEnabled(not loading)
+        self._btn_import.setEnabled(not loading)
         self._btn_reload_last.setEnabled(not loading and bool(self._memory.existing_last_session_files()))
         if status_message:
             self._statusbar.showMessage(status_message)
@@ -2760,7 +2761,7 @@ class MainWindow(QMainWindow):
             if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in {".pcap", ".pcapng", ".cap", ".xml"}
         ]
         if paths:
-            self._load_paths(paths)
+            self._import_paths(paths)
             event.acceptProposedAction()
             return
         event.ignore()
