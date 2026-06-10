@@ -5,6 +5,20 @@ Dieses Changelog dokumentiert den aktuell rekonstruierten Entwicklungsstand der 
 Das Format orientiert sich an Keep a Changelog.  
 Eine lueckenlose Historie vor dem dokumentierten Stand wurde nicht rueckwirkend aus Commits rekonstruiert.
 
+## [2026.0610] - 2026-06-10
+
+### Added
+- **Demo-Transparenz für gesperrte Nachrichtentypen**: In der Demo-Version werden weiterhin alle Typen außer CAM/NMEA übersprungen, dies wird nun aber sichtbar gemacht. Das Statistik-Dashboard zeigt eine Zeile „Gesperrt (Demo): …" mit Anzahl je Typ, und der Nachrichtentyp-Filter rendert gesperrte Typen als deaktivierte „(gesperrt)"-Checkboxen. Beim ersten Import in der Demo erscheint zudem ein einmaliger Hinweis.
+
+### Changed
+- **Demo-Dateigrößenlimit von 2 MB auf 3 MB erhöht** (weiterhin ausschließlich in der Demo-Version), zentralisiert über die Konstante `DEMO_MAX_FILE_SIZE_MB`.
+- **Diagnose-Export in die Menüstruktur integriert**: Der frei schwebende „Diagnose exportieren"-Button (sowie weitere fehlplatzierte Schwebe-Buttons wie „Karte neu laden", „ASN.1-Schemas", „MAP prüfen") wird nicht mehr unter der Menüleiste eingeblendet; die Funktionen bleiben über die Menüs und den Schnellbefehl erreichbar.
+
+### Fixed
+- **Import nach Fehlschlag blockierte alle weiteren Versuche**: Der Lade-Thread wurde nach dem Import nie beendet, wodurch ein erneuter Import bis zum Neustart der App abgelehnt wurde. Der Worker beendet den Thread jetzt korrekt (`finished`/`cancelled → quit`), sodass ein Wiederholungsversuch sofort möglich ist.
+- **Cache ignorierte den Lizenzstatus**: Eine in der Demo gecachte Datei (nur CAM/NMEA) lieferte auch nach Lizenzaktivierung weiterhin gefilterte Daten. Der Lizenzstatus ist nun Teil des Cache-Schlüssels; Demo- und Vollversions-Caches kollidieren nicht mehr.
+- **„Gesperrt (Demo)"-Zähler im Cache bilanziert**: Die Zähler gesperrter Typen werden im Cache mitgespeichert (mit Abwärtskompatibilität zum alten Format), sodass sie auch bei einem Cache-Treffer konsistent bleiben.
+
 ## [2026.0607] - 2026-06-07
 
 ### Added
@@ -200,7 +214,7 @@ Release candidate for 1.8. The release focuses on MAP-XML usability, Leaflet sta
 - Parser-Robustheit fuer `pyshark` und `scapy` deutlich erweitert
 - ITS-Nachrichtenerkennung verbessert durch BTP-Port-Logik und `messageId`-Fallback aus dem ITS-PDU-Header
 - GeoNetworking-/BTP-Erkennung fuer direkten ITS-G5-Traffic erweitert
-- UI visuell in Richtung SWARCO-ITS-inspirierter Operator-Oberflaeche ueberarbeitet
+- UI visuell in Richtung einer modernen Operator-Oberflaeche ueberarbeitet
 - KML-Export auf Windows-sichere Dateinamen und Kollisionsvermeidung gehaertet
 - MAPEM-, SPATEM-, SREM- und SSEM-Zusatzfelder in `decoded_data` deutlich vertieft
 
