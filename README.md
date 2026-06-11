@@ -57,6 +57,36 @@ The application is built on PyQt6 and an optimized QWebEngine / Leaflet stack de
 *   **Lazy Tab Rendering**: Maps and raw tables update only when their tab is visible. This saves significant CPU cycles and prevents WebEngine IPC bottlenecks at high speeds (up to 10x).
 *   **Memory Guard**: A background thread continuously monitors the application's RAM usage. It automatically switches map details to "Saver" or "Diagnostic" mode if memory exceeds thresholds.
 *   **Local Assets**: Leaflet JS/CSS libraries and images are bundled locally for offline use.
+*   **Streaming-First MessageSource Protocol** *(v1.10)*: The internal `MessageSource` protocol now supports streaming semantics — `state`, `stats`, `pause()`, `resume()`, `on_event()`. A shared `DefaultMessageSourceMixin` reduces boilerplate. `PcapFileSource` uses lazy iteration (no eager full-parse on duration query).
+
+---
+
+## 📋 Recent Updates (v1.10 — Pre-Live Preparation)
+
+The current release focuses on **architectural hardening** for the upcoming live-capture phase (v2.0). No new user-facing features; primarily a code-quality and UI-consistency milestone.
+
+### Architecture
+- **Streaming-capable `MessageSource` protocol**: additive members (`state`, `stats`, `pause`, `resume`, `on_event`) with `SourceState` enum and `SourceStats` dataclass. All existing sources (`PcapFileSource`, `XmlMapSource`, `SessionMessageSource`, `CombinedMessageSource`) are backward-compatible.
+- **`PcapFileSource` lazy streaming**: `iter_messages()` is a single-use generator; `duration()` is cached (no eager parse bug).
+- **Live-source skeletons**: `Esp32MqttSource` (OpenTrafficMap firmware integration — phase 4 will hook the real MQTT subscription), `CohdaMk6Source` + `OpenC2XSource` (skeleton stubs that satisfy the protocol).
+
+### UI
+- **Top toolbar cleaned up**: 5 export buttons (KML, Fehler, Diagnose, Dashboard, Bericht) moved to dedicated menus.
+- **New menu order**: Datei → **Export** → Optionen → **Ansicht** → Hilfe. The "Export" menu groups the four export functions; "Ansicht" holds the dashboard.
+- **Workspace toolbar visually aligned** with the main toolbar (default Qt grey, padding for tab buttons fixed — letters like "M" in "MAP-Analyse" are no longer clipped).
+- **Profile switcher widened** (160 → 240 px) so all three profiles (Analyst, Feldtester, Einsteiger) are visible without scrolling.
+
+### Quality
+- **745 tests passing, 0 failures** (up from 689 in v1.9).
+- Bugfix: `PcapFileSource.duration()` no longer triggers full PCAP parse.
+- Bugfix: mixin state was leaking across instances (class attributes) — fixed via per-instance init.
+- Bugfix: inline `QToolButton` stylesheet was overridden by Qt internals — replaced with `QPushButton#wsGroupTab` objectName stylesheet.
+
+### Roadmap
+- v1.8 (1.8.0): ✅ Completed
+- v1.9: ✅ Completed (SPAT analysis)
+- **v1.10**: ✅ **Completed** (Pre-Live preparation — this release)
+- v2.0: 🚧 In development (real MQTT integration with OpenTrafficMap firmware)
 
 ---
 
